@@ -281,6 +281,7 @@ def country_class(name):
         "Canada",
         "United States of America",
         "Denmark",
+        "Greenland",
         "Iceland",
         "Norway",
         "Sweden",
@@ -429,9 +430,7 @@ def add_source_link(slide, label, title, url, x, y, w):
     title_box = add_text(slide, title, x + 0.43, y - 0.02, w - 0.43, 0.25, 10, WHITE, True)
     url_box = add_text(slide, url, x + 0.43, y + 0.24, w - 0.43, 0.31, 8, MUTED_2)
     for box in (title_box, url_box):
-        for paragraph in box.text_frame.paragraphs:
-            for run in paragraph.runs:
-                run.hyperlink.address = url
+        box.click_action.hyperlink.address = url
 
 
 def build_presentation():
