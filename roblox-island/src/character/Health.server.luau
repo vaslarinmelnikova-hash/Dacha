@@ -1,0 +1,2 @@
+-- An empty script named "Health" replaces Roblox's default health regeneration,
+-- so players heal only by eating or resting by a campfire.
