@@ -1,3 +1,4 @@
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -169,25 +170,6 @@ player:GetAttributeChangedSignal("Hunger"):Connect(refreshHunger)
 refreshInventory()
 refreshHunger()
 
--- Controls hint
-
-local hint = label(gui, "ЛКМ — бить   |   C — крафт   |   F — съесть ягоду", 18)
-hint.AnchorPoint = Vector2.new(0.5, 1)
-hint.Position = UDim2.new(0.5, 0, 1, -78)
-hint.Size = UDim2.fromOffset(500, 24)
-hint.TextTransparency = 0.2
-
-UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then
-		return
-	end
-	if input.KeyCode == Enum.KeyCode.C then
-		craftPanel.Visible = not craftPanel.Visible
-	elseif input.KeyCode == Enum.KeyCode.F then
-		Remotes.Action:FireServer("Eat")
-	end
-end)
-
 -- Notifications
 
 local feed = Instance.new("Frame")
@@ -203,7 +185,7 @@ layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 layout.Padding = UDim.new(0, 4)
 layout.Parent = feed
 
-Remotes.Notify.OnClientEvent:Connect(function(text: string)
+local function showNotice(text: string)
 	local l = label(feed, text, 22)
 	l.Size = UDim2.new(1, 0, 0, 26)
 	task.delay(1.5, function()
@@ -213,4 +195,231 @@ Remotes.Notify.OnClientEvent:Connect(function(text: string)
 		end)
 		tween:Play()
 	end)
+end
+
+Remotes.Notify.OnClientEvent:Connect(showNotice)
+
+local function button(parent: Instance, text: string, color: Color3): TextButton
+	local b = Instance.new("TextButton")
+	b.Font = font
+	b.TextSize = 18
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Text = text
+	b.BackgroundColor3 = color
+	b.Parent = parent
+	corner(b, 6)
+	return b
+end
+
+-- Chests and loot bags
+
+local rowHeight = 40
+local containerPanel = Instance.new("Frame")
+containerPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+containerPanel.Position = UDim2.fromScale(0.5, 0.45)
+containerPanel.Size = UDim2.fromOffset(460, 110 + #Config.Items * rowHeight)
+containerPanel.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+containerPanel.BackgroundTransparency = 0.15
+containerPanel.Visible = false
+containerPanel.Parent = gui
+corner(containerPanel)
+
+local containerTitle = label(containerPanel, "", 24)
+containerTitle.Size = UDim2.new(1, 0, 0, 40)
+
+local header = label(containerPanel, "у тебя / внутри", 16)
+header.Position = UDim2.fromOffset(150, 34)
+header.Size = UDim2.fromOffset(110, 20)
+header.TextTransparency = 0.3
+
+local openId: string? = nil
+local openItems: { [string]: number } = {}
+local openModel: Model? = nil
+local countLabels: { [string]: TextLabel } = {}
+
+for i, item in Config.Items do
+	local y = 56 + (i - 1) * rowHeight
+	local name = label(containerPanel, Config.ItemNames[item], 20)
+	name.TextXAlignment = Enum.TextXAlignment.Left
+	name.Position = UDim2.fromOffset(16, y)
+	name.Size = UDim2.fromOffset(140, rowHeight - 6)
+
+	local count = label(containerPanel, "", 20)
+	count.Position = UDim2.fromOffset(150, y)
+	count.Size = UDim2.fromOffset(110, rowHeight - 6)
+	countLabels[item] = count
+
+	local store = button(containerPanel, "Положить", Color3.fromRGB(70, 90, 140))
+	store.Position = UDim2.fromOffset(266, y)
+	store.Size = UDim2.fromOffset(90, rowHeight - 8)
+	store.Activated:Connect(function()
+		Remotes.Action:FireServer("Store", openId, item)
+	end)
+
+	local take = button(containerPanel, "Взять", Color3.fromRGB(60, 120, 60))
+	take.Position = UDim2.fromOffset(362, y)
+	take.Size = UDim2.fromOffset(82, rowHeight - 8)
+	take.Activated:Connect(function()
+		Remotes.Action:FireServer("Take", openId, item)
+	end)
+end
+
+local closeButton = button(containerPanel, "Закрыть", Color3.fromRGB(110, 50, 50))
+closeButton.AnchorPoint = Vector2.new(0.5, 1)
+closeButton.Position = UDim2.new(0.5, 0, 1, -10)
+closeButton.Size = UDim2.fromOffset(140, 34)
+
+local function refreshContainer()
+	if not openId then
+		return
+	end
+	for item, count in countLabels do
+		count.Text = string.format("%d / %d", player:GetAttribute(item) or 0, openItems[item] or 0)
+	end
+end
+
+local function closeContainer(tellServer: boolean)
+	if openId and tellServer then
+		Remotes.Action:FireServer("CloseContainer", openId)
+	end
+	openId, openModel = nil, nil
+	containerPanel.Visible = false
+end
+
+closeButton.Activated:Connect(function()
+	closeContainer(true)
+end)
+
+for _, item in Config.Items do
+	player:GetAttributeChangedSignal(item):Connect(refreshContainer)
+end
+
+Remotes.Container.OnClientEvent:Connect(function(action: string, id: string, items: any, title: string?, model: Model?)
+	if action == "Open" then
+		openId, openItems, openModel = id, items, model
+		containerTitle.Text = title or ""
+		containerPanel.Visible = true
+		refreshContainer()
+	elseif action == "Update" and id == openId then
+		openItems = items
+		refreshContainer()
+	elseif action == "Close" and id == openId then
+		closeContainer(false)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.3)
+		if openId then
+			local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+			local model = openModel
+			if not root or not model or not model.Parent or (model:GetPivot().Position - root.Position).Magnitude > 14 then
+				closeContainer(true)
+			end
+		end
+	end
+end)
+
+-- Shop
+
+local shopPanel = Instance.new("Frame")
+shopPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+shopPanel.Position = UDim2.fromScale(0.5, 0.45)
+shopPanel.Size = UDim2.fromOffset(420, 100 + #Config.GamePasses * 90)
+shopPanel.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+shopPanel.BackgroundTransparency = 0.15
+shopPanel.Visible = false
+shopPanel.Parent = gui
+corner(shopPanel)
+
+local shopTitle = label(shopPanel, "Магазин", 26)
+shopTitle.Size = UDim2.new(1, 0, 0, 44)
+
+local buyButtons: { [string]: TextButton } = {}
+
+for i, pass in Config.GamePasses do
+	local y = 48 + (i - 1) * 90
+	local title = label(shopPanel, pass.Display, 22)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Position = UDim2.fromOffset(16, y)
+	title.Size = UDim2.fromOffset(250, 26)
+
+	local description = label(shopPanel, pass.Description, 16)
+	description.TextXAlignment = Enum.TextXAlignment.Left
+	description.TextYAlignment = Enum.TextYAlignment.Top
+	description.TextWrapped = true
+	description.Position = UDim2.fromOffset(16, y + 28)
+	description.Size = UDim2.fromOffset(260, 50)
+
+	local buy = button(shopPanel, "Купить", Color3.fromRGB(200, 150, 40))
+	buy.Position = UDim2.fromOffset(290, y + 14)
+	buy.Size = UDim2.fromOffset(114, 40)
+	buy.Activated:Connect(function()
+		if player:GetAttribute(pass.Key) then
+			return
+		end
+		if pass.Id == 0 then
+			showNotice("Этот Game Pass ещё не настроен (Config.GamePasses)")
+			return
+		end
+		MarketplaceService:PromptGamePassPurchase(player, pass.Id)
+	end)
+	buyButtons[pass.Key] = buy
+end
+
+local shopClose = button(shopPanel, "Закрыть", Color3.fromRGB(110, 50, 50))
+shopClose.AnchorPoint = Vector2.new(0.5, 1)
+shopClose.Position = UDim2.new(0.5, 0, 1, -10)
+shopClose.Size = UDim2.fromOffset(140, 34)
+shopClose.Activated:Connect(function()
+	shopPanel.Visible = false
+end)
+
+local shopButton = button(gui, "Магазин", Color3.fromRGB(200, 150, 40))
+shopButton.AnchorPoint = Vector2.new(1, 0)
+shopButton.Position = UDim2.new(1, -16, 0, 60)
+shopButton.Size = UDim2.fromOffset(120, 38)
+shopButton.TextSize = 20
+shopButton.Activated:Connect(function()
+	shopPanel.Visible = not shopPanel.Visible
+end)
+
+local vipBadge = label(gui, "VIP", 22)
+vipBadge.Position = UDim2.fromOffset(16, 70 + inventory.Size.Y.Offset)
+vipBadge.Size = UDim2.fromOffset(60, 26)
+vipBadge.TextColor3 = Color3.fromRGB(255, 200, 60)
+vipBadge.Visible = false
+
+local function refreshPasses()
+	for _, pass in Config.GamePasses do
+		local owned = player:GetAttribute(pass.Key) == true
+		buyButtons[pass.Key].Text = owned and "Куплено" or "Купить"
+		buyButtons[pass.Key].AutoButtonColor = not owned
+	end
+	vipBadge.Visible = player:GetAttribute("VIP") == true
+end
+
+for _, pass in Config.GamePasses do
+	player:GetAttributeChangedSignal(pass.Key):Connect(refreshPasses)
+end
+refreshPasses()
+
+-- Controls
+
+local hint = label(gui, "ЛКМ — бить   |   C — крафт   |   F — поесть   |   E — открыть", 18)
+hint.AnchorPoint = Vector2.new(0.5, 1)
+hint.Position = UDim2.new(0.5, 0, 1, -78)
+hint.Size = UDim2.fromOffset(600, 24)
+hint.TextTransparency = 0.2
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.C then
+		craftPanel.Visible = not craftPanel.Visible
+	elseif input.KeyCode == Enum.KeyCode.F then
+		Remotes.Action:FireServer("Eat")
+	end
 end)
