@@ -97,7 +97,7 @@ def add_kicker(slide, number, text):
 
 
 def add_photo_credit(slide, text):
-    add_text(slide, text, 9.55, 7.08, 3.18, 0.18, 7, MUTED_2, align=PP_ALIGN.RIGHT)
+    add_text(slide, text, 9.55, 6.92, 3.18, 0.18, 7, MUTED_2, align=PP_ALIGN.RIGHT)
 
 
 def add_icon_route(slide, x, y, color):
@@ -423,7 +423,7 @@ def build():
             True,
             align=PP_ALIGN.CENTER,
         )
-        add_text(slide, text, 1.38, y - 0.02, 3.15, 0.67, 13, WHITE, True)
+        add_text(slide, text, 1.38, y - 0.02, 3.15, 0.67, 14, WHITE, True)
     add_text(slide, "MERCI", 0.68, 6.73, 1.3, 0.24, 10, MUTED_2, True)
     add_photo_credit(slide, "Illustration éditoriale générée · sans valeur documentaire")
     add_notes(
