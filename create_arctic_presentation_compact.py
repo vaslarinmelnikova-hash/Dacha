@@ -37,7 +37,7 @@ from create_arctic_presentation import (
 
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
-OUT = ROOT / "Militarisation_Arctique_Version_Courte.pptx"
+OUT = ROOT / "Militarisation_Arctique_5_Slides_Complete.pptx"
 
 HERO = ASSETS / "arctic_icebreaker_hero.jpg"
 QUESTIONS = ASSETS / "arctic_questions_background.jpg"
@@ -195,9 +195,9 @@ def build():
     )
 
     cards = [
-        ("−12,1 %", "BANQUISE", "par décennie", ICE),
-        ("ROUTES", "ACCÈS", "saisonnier", ORANGE),
-        ("ALERTE", "DÉFENSE", "nucléaire", RED),
+        ("−12,1 %", "BANQUISE", "par décennie\ndepuis 1979", ICE),
+        ("ROUTES", "ACCÈS", "passages plus longs\nchaque été", ORANGE),
+        ("ALERTE", "DÉFENSE", "sous-marins, radars\net aviation", RED),
     ]
     for i, (big, title, small, color) in enumerate(cards):
         x = 0.66 + i * 2.16
@@ -205,7 +205,7 @@ def build():
         add_circle(slide, x + 0.22, 4.3, 0.2, color)
         add_text(slide, big, x + 0.22, 4.69, 1.52, 0.33, 16, WHITE, True)
         add_text(slide, title, x + 0.22, 5.13, 1.48, 0.22, 9, color, True)
-        add_text(slide, small, x + 0.22, 5.42, 1.48, 0.2, 9, MUTED)
+        add_text(slide, small, x + 0.22, 5.39, 1.48, 0.4, 8, MUTED)
 
     add_rect(slide, 8.17, 4.78, 4.1, 1.06, NAVY_2, radius=True)
     add_rich_text(
@@ -222,6 +222,18 @@ def build():
         3.5,
         0.27,
         13,
+        align=PP_ALIGN.CENTER,
+    )
+    add_text(
+        slide,
+        "La fonte des glaces crée une opportunité ;\nla rivalité transforme cette opportunité en enjeu militaire.",
+        8.35,
+        6.02,
+        3.75,
+        0.5,
+        10,
+        WHITE,
+        True,
         align=PP_ALIGN.CENTER,
     )
     add_footer(slide, "Source : NSIDC, minimum de banquise 2025.", 2)
@@ -268,13 +280,31 @@ def build():
     )
 
     actors = [
-        ("RUSSIE", "Kola · SNLE · déni d’accès", RED, "BASTION"),
-        ("OTAN", "continuité · surveillance · renforts", ICE, "ALLIANCE"),
-        ("CHINE", "science · routes · influence", ORANGE, "ACCÈS"),
+        (
+            "RUSSIE",
+            "Kola · SNLE · déni d’accès",
+            "Protège sa dissuasion et contrôle sa façade nord.",
+            RED,
+            "BASTION",
+        ),
+        (
+            "OTAN",
+            "continuité · surveillance · renforts",
+            "Sept États arctiques alliés depuis 2024.",
+            ICE,
+            "ALLIANCE",
+        ),
+        (
+            "CHINE",
+            "science · routes · influence",
+            "Acteur non riverain, présence militaire limitée.",
+            ORANGE,
+            "ACCÈS",
+        ),
     ]
-    for i, (name, line, color, tag) in enumerate(actors):
+    for i, (name, line, detail, color, tag) in enumerate(actors):
         y = 2.28 + i * 1.42
-        add_rect(slide, 8.03, y, 4.68, 1.18, PANEL, radius=True)
+        add_rect(slide, 8.03, y, 4.68, 1.28, PANEL, radius=True)
         add_circle(slide, 8.35, y + 0.28, 0.55, color)
         add_text(
             slide,
@@ -290,7 +320,8 @@ def build():
         )
         add_text(slide, name, 9.13, y + 0.22, 1.2, 0.28, 13, color, True)
         add_pill(slide, tag, 11.25, y + 0.19, 1.04, fill=NAVY_2, color=MUTED, size=8)
-        add_text(slide, line, 9.13, y + 0.66, 3.1, 0.25, 10, WHITE)
+        add_text(slide, line, 9.13, y + 0.58, 3.1, 0.22, 9, WHITE, True)
+        add_text(slide, detail, 9.13, y + 0.84, 3.1, 0.3, 8, MUTED)
 
     add_rect(slide, 8.03, 6.55, 4.68, 0.3, PANEL_2, radius=True)
     add_text(
@@ -335,11 +366,29 @@ def build():
     )
 
     hotspots = [
-        ("01", "KOLA · GIUK", "Sous-marins\n& renforts", RED),
-        ("02", "GROENLAND", "Alerte\n& espace", ICE),
-        ("03", "BÉRING · NSR", "Routes\n& zone grise", ORANGE),
+        (
+            "01",
+            "KOLA · GIUK",
+            "Sous-marins & renforts",
+            "Zone des SNLE russes et route des forces alliées.",
+            RED,
+        ),
+        (
+            "02",
+            "GROENLAND",
+            "Alerte & espace",
+            "Radars, satellites et accès à l’Amérique du Nord.",
+            ICE,
+        ),
+        (
+            "03",
+            "BÉRING · NSR",
+            "Routes & zone grise",
+            "Navigation, contrôle russe et présence chinoise.",
+            ORANGE,
+        ),
     ]
-    for i, (num, title, desc, color) in enumerate(hotspots):
+    for i, (num, title, desc, detail, color) in enumerate(hotspots):
         x = 0.63 + i * 4.13
         add_rect(slide, x, 2.35, 3.78, 2.8, PANEL, radius=True)
         add_pill(slide, num, x + 0.25, 2.62, 0.58, fill=color, color=NAVY)
@@ -351,8 +400,9 @@ def build():
             add_icon_radar(slide, x + 1.2, 3.14, color)
         else:
             add_icon_route(slide, x + 1.25, 3.57, color)
-        add_text(slide, title, x + 0.25, 4.18, 3.28, 0.28, 12, color, True, align=PP_ALIGN.CENTER)
-        add_text(slide, desc, x + 0.25, 4.53, 3.28, 0.46, 11, WHITE, True, align=PP_ALIGN.CENTER)
+        add_text(slide, title, x + 0.25, 4.03, 3.28, 0.28, 12, color, True, align=PP_ALIGN.CENTER)
+        add_text(slide, desc, x + 0.25, 4.36, 3.28, 0.25, 10, WHITE, True, align=PP_ALIGN.CENTER)
+        add_text(slide, detail, x + 0.42, 4.67, 2.94, 0.34, 8, MUTED, align=PP_ALIGN.CENTER)
 
     add_rect(slide, 0.63, 5.55, 12.03, 0.97, NAVY_2, radius=True, line=PANEL_2)
     chain = [("INCIDENT", RED), ("PERCEPTION", ORANGE), ("RIPOSTE", ICE)]
@@ -440,10 +490,10 @@ def build():
     )
 
     props = prs.core_properties
-    props.title = "La militarisation de l’Arctique — version courte"
-    props.subject = "Exposé visuel en 5 diapositives"
+    props.title = "La militarisation de l’Arctique — version enrichie"
+    props.subject = "Exposé visuel en 5 diapositives avec explications"
     props.author = "Cursor"
-    props.comments = "Version sombre, visuelle et concise avec notes du présentateur."
+    props.comments = "Version sombre et visuelle avec texte explicatif et notes du présentateur."
     prs.save(OUT)
     print(f"Created: {OUT}")
     print(f"Slides: {len(prs.slides)}")
