@@ -235,6 +235,8 @@ def build_document():
         "mais c’est la rivalité entre puissances qui transforme cette opportunité en enjeu stratégique.",
     )
 
+    add_page_break(doc)
+
     add_heading(doc, "Diapositive 3 — Les acteurs", 2)
     add_body(
         doc,
