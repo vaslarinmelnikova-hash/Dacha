@@ -53,6 +53,13 @@ export default function AddProduct() {
   const [rawText, setRawText] = useState('')
   const [scanError, setScanError] = useState('')
 
+  // Recognition finishes long after the photo was picked, so autofill reads the fields through
+  // a ref to see anything typed in the meantime rather than the values it captured back then.
+  const typed = useRef({ name, brand, manufactureDate, expirationDate })
+  useEffect(() => {
+    typed.current = { name, brand, manufactureDate, expirationDate }
+  })
+
   useEffect(() => {
     setAutoScan(localStorage.getItem(AUTO_SCAN_KEY) !== 'off')
   }, [])
@@ -62,31 +69,31 @@ export default function AddProduct() {
     localStorage.setItem(AUTO_SCAN_KEY, enabled ? 'on' : 'off')
   }
 
-  /** Autofill never overwrites something already typed — the camera assists, it does not decide. */
-  const applyDraft = (label: ParsedLabel, forCategory: Category) => {
+  /**
+   * Autofill never overwrites something already typed — the camera assists, it does not decide.
+   * Overwriting happens only when the user asks for it with "Подставить заново".
+   */
+  const applyDraft = (label: ParsedLabel, forCategory: Category, overwrite = false) => {
     const draft = toProductDraft(label, forCategory)
+    const current = typed.current
     const filled: string[] = []
 
-    setName((current) => {
-      if (current.trim() || !draft.name) return current
+    if (draft.name && (overwrite || !current.name.trim())) {
+      setName(draft.name)
       filled.push('name')
-      return draft.name
-    })
-    setBrand((current) => {
-      if (current.trim() || !draft.brand) return current
+    }
+    if (draft.brand && (overwrite || !current.brand.trim())) {
+      setBrand(draft.brand)
       filled.push('brand')
-      return draft.brand
-    })
-    setManufactureDate((current) => {
-      if (current || !draft.manufactureDate) return current
+    }
+    if (draft.manufactureDate && (overwrite || !current.manufactureDate)) {
+      setManufactureDate(draft.manufactureDate)
       filled.push('manufactureDate')
-      return draft.manufactureDate
-    })
-    setExpirationDate((current) => {
-      if (current || !draft.expirationDate) return current
+    }
+    if (draft.expirationDate && (overwrite || !current.expirationDate)) {
+      setExpirationDate(draft.expirationDate)
       filled.push('expirationDate')
-      return draft.expirationDate
-    })
+    }
 
     setFilledFields(filled)
   }
@@ -317,7 +324,7 @@ export default function AddProduct() {
               </span>
               <button
                 type="button"
-                onClick={() => applyDraft(parsed, category)}
+                onClick={() => applyDraft(parsed, category, true)}
                 className="text-xs text-blue-600"
               >
                 Подставить заново

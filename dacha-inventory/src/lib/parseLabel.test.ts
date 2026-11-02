@@ -23,8 +23,10 @@ const WINE_LABEL = `МАССАНДРА
 /** Line heights as reported by the recognizer for the same label. */
 const WINE_LINES: OcrLine[] = [
   { text: 'МАССАНДРА', height: 63 },
+  // 'Мускат белый' carries both an ascender and a descender; the next line of the same font
+  // size measures noticeably shorter.
   { text: 'Мускат белый', height: 95 },
-  { text: 'красного камня', height: 90 },
+  { text: 'красного камня', height: 68 },
   { text: '2019', height: 65 },
   { text: 'Вино ликёрное белое', height: 42 },
   { text: 'Винодельня Массандра, Крым', height: 36 },
@@ -104,6 +106,15 @@ describe('pickName', () => {
     expect(pickName([{ text: 'Содержит сульфиты', height: 99 }, { text: 'Мускат белый', height: 20 }])).toBe(
       'Мускат белый',
     )
+  })
+
+  it('stops before a clearly smaller line', () => {
+    expect(
+      pickName([
+        { text: 'Мускат белый', height: 95 },
+        { text: 'Вино ликёрное белое', height: 42 },
+      ]),
+    ).toBe('Мускат белый')
   })
 
   it('falls back to text shape when the recognizer reports no sizes', () => {

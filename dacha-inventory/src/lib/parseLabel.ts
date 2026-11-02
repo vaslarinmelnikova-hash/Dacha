@@ -139,7 +139,9 @@ export const pickName = (lines: OcrLine[]): string | undefined => {
   if (best.height > 0) {
     for (let index = scored.indexOf(best) + 1; index < scored.length; index++) {
       const next = scored[index]
-      if (next.score <= 0 || next.height < best.height * 0.8) break
+      // Generous ratio: at one font size, a line of ascenders and descenders measures much
+      // taller than a line without them, so same-size title lines are far from equal.
+      if (next.score <= 0 || next.height < best.height * 0.65) break
       parts.push(next.text)
     }
   }
