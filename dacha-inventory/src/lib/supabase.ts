@@ -1,15 +1,34 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { HistoryEntry, Product } from '../types'
 
 const url = import.meta.env.VITE_SUPABASE_URL
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-export const supabaseConfigError =
-  url && key
-    ? null
-    : 'Не заданы переменные окружения VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY.'
+// createClient rejects a malformed URL by throwing while this module is still being imported,
+// which leaves a blank page and nothing to read. Catching it turns a typo in the deployment
+// settings into a message on screen.
+const connect = (): { client: SupabaseClient; error: string | null } => {
+  if (!url || !key) {
+    return {
+      client: createClient('http://localhost', 'missing-key'),
+      error: 'Не заданы переменные окружения VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY.',
+    }
+  }
+  try {
+    return { client: createClient(url, key), error: null }
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error)
+    return {
+      client: createClient('http://localhost', 'missing-key'),
+      error: `Неверное значение VITE_SUPABASE_URL (${url}). ${details}`,
+    }
+  }
+}
 
-export const supabase = createClient(url ?? 'http://localhost', key ?? 'missing-key')
+const connection = connect()
+
+export const supabase = connection.client
+export const supabaseConfigError = connection.error
 
 export const uploadPhoto = async (file: Blob, fileName: string): Promise<string> => {
   const { data, error } = await supabase.storage
