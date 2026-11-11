@@ -1,4 +1,10 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local Containers = require(script.Parent.Containers)
 local WorldGen = require(script.Parent.WorldGen)
+
+local Remotes = ReplicatedStorage.Remotes
 
 local Builds = {}
 
@@ -71,6 +77,76 @@ function makers.WoodWall(model: Model, base: CFrame)
 	}).Parent = model
 end
 
+local wallColor = Color3.fromRGB(140, 100, 60)
+
+function makers.DoorWall(model: Model, base: CFrame, owner: Player)
+	for _, x in { -3.5, 3.5 } do
+		anchoredPart({
+			Size = Vector3.new(3, 8, 1),
+			CFrame = base * CFrame.new(x, 3.5, 0),
+			Material = Enum.Material.WoodPlanks,
+			Color = wallColor,
+		}).Parent = model
+	end
+	anchoredPart({
+		Size = Vector3.new(4, 1, 1),
+		CFrame = base * CFrame.new(0, 7, 0),
+		Material = Enum.Material.WoodPlanks,
+		Color = wallColor,
+	}).Parent = model
+
+	local closed = base * CFrame.new(0, 3, 0)
+	local hinge = base * CFrame.new(-2, 3, 0)
+	local opened = hinge * CFrame.Angles(0, math.rad(-95), 0) * CFrame.new(2, 0, 0)
+
+	local door = anchoredPart({
+		Name = "Door",
+		Size = Vector3.new(4, 7, 0.4),
+		CFrame = closed,
+		Material = Enum.Material.Wood,
+		Color = Color3.fromRGB(105, 70, 40),
+	})
+	door.Parent = model
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "Открыть"
+	prompt.ObjectText = "Дверь"
+	prompt.MaxActivationDistance = 8
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = door
+
+	local isOpen = false
+	prompt.Triggered:Connect(function(player)
+		if player.UserId ~= owner.UserId then
+			Remotes.Notify:FireClient(player, "Дверь заперта")
+			return
+		end
+		isOpen = not isOpen
+		prompt.ActionText = isOpen and "Закрыть" or "Открыть"
+		TweenService:Create(door, TweenInfo.new(0.35, Enum.EasingStyle.Quad), {
+			CFrame = isOpen and opened or closed,
+		}):Play()
+	end)
+end
+
+function makers.Chest(model: Model, base: CFrame, owner: Player)
+	local box = anchoredPart({
+		Name = "Box",
+		Size = Vector3.new(3.4, 1.8, 2.2),
+		CFrame = base * CFrame.new(0, 0.9, 0),
+		Material = Enum.Material.WoodPlanks,
+		Color = Color3.fromRGB(125, 85, 50),
+	})
+	box.Parent = model
+	anchoredPart({
+		Size = Vector3.new(3.6, 0.4, 2.4),
+		CFrame = base * CFrame.new(0, 2, 0),
+		Material = Enum.Material.Wood,
+		Color = Color3.fromRGB(95, 62, 38),
+	}).Parent = model
+	Containers.Register(model, box, "Ящик", owner.UserId)
+end
+
 -- Places a structure a few studs in front of the character, snapped to the ground.
 function Builds.Place(player: Player, id: string): boolean
 	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -88,7 +164,7 @@ function Builds.Place(player: Player, id: string): boolean
 	local model = Instance.new("Model")
 	model.Name = id
 	model:SetAttribute("Owner", player.UserId)
-	makers[id](model, CFrame.lookAt(ground, ground + forward))
+	makers[id](model, CFrame.lookAt(ground, ground + forward), player)
 	model.Parent = folder
 	return true
 end
