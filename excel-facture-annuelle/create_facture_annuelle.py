@@ -139,6 +139,7 @@ def build():
 
         for m in range(12):
             r = first + m
+            ws.row_dimensions[r].height = 15
             ws[f"B{r}"] = MOIS[m]
             ws[f"C{r}"] = dt.date(2017, m + 1, 1)
             ws[f"C{r}"].number_format = "DD/MM/YYYY"
@@ -267,7 +268,6 @@ def build():
         ws[f"Q{r}"].alignment = Alignment(horizontal="right", vertical="center")
         ws[f"R{r}"].alignment = CENTER
         ws[f"S{r}"].alignment = CENTER
-        ws.row_dimensions[r].height = 20
     outline(ws, "Q2:S7")
 
     # Histogramme empilé 2D : Commerciaux + Mois / Nombre de ventes / Salaire mensuel net
