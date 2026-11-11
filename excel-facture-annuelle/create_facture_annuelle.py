@@ -225,51 +225,6 @@ def build():
 
     last_data = total_row - 1
 
-    # Classement des commerciaux (à droite du tableau)
-    union = "(" + ",".join(totals) + ")"
-    ws.column_dimensions["Q"].width = 34
-    ws.column_dimensions["R"].width = 16
-    ws.column_dimensions["S"].width = 16
-    ws.merge_cells("Q2:S2")
-    ws["Q2"] = "Classement des commerciaux"
-    ws["Q2"].font = Font(name="Calibri", bold=True, size=14, color="FFFFFF")
-    ws["Q2"].alignment = CENTER
-    ws["Q3"] = "Rang"
-    ws["R3"] = "Commercial"
-    ws["S3"] = "Salaire Annuel TOTAL"
-    for ref in ("Q2", "R2", "S2", "Q3", "R3", "S3"):
-        ws[ref].fill = HEADER_FILL
-        ws[ref].border = BORDER
-        ws[ref].alignment = CENTER
-    for ref in ("Q3", "R3", "S3"):
-        ws[ref].font = WHITE_BOLD
-
-    rangs = [
-        "Le meilleur vendeur de l'année ☺",
-        "Le 2ème ☺",
-        "Le 3ème ☺",
-        "Le dernier ☹",
-    ]
-    noms = [f"A{FIRST_ROW + i * 12}" for i in range(len(COMMERCIAUX))]
-    for k, label in enumerate(rangs, start=1):
-        r = 3 + k
-        ws[f"Q{r}"] = label
-        ws[f"S{r}"] = f"=LARGE({union},{k})"
-        chain = noms[-1]
-        for tot, nom in reversed(list(zip(totals[:-1], noms[:-1]))):
-            chain = f"IF(S{r}={tot},{nom},{chain})"
-        ws[f"R{r}"] = "=" + chain
-        ws[f"S{r}"].number_format = EURO_2
-        fill = BLOCK_FILLS[1] if k % 2 else CALC_FILLS[0]
-        for col in "QRS":
-            ws[f"{col}{r}"].fill = fill
-            ws[f"{col}{r}"].border = BORDER
-            ws[f"{col}{r}"].font = BOLD if col != "S" else NORMAL
-        ws[f"Q{r}"].alignment = Alignment(horizontal="right", vertical="center")
-        ws[f"R{r}"].alignment = CENTER
-        ws[f"S{r}"].alignment = CENTER
-    outline(ws, "Q2:S7")
-
     # Histogramme empilé 2D : Commerciaux + Mois / Nombre de ventes / Salaire mensuel net
     chart = BarChart()
     chart.type = "col"
