@@ -2,6 +2,8 @@ export interface OcrLine {
   text: string
   /** Height of the line in pixels — the recognizer's best proxy for how prominent the text is. */
   height: number
+  /** Distance from the top of the photo, where known. Breaks ties between similar heights. */
+  top?: number
   /** 0…100 from the recognizer. Absent when the lines came from plain text. */
   confidence?: number
 }
@@ -13,6 +15,12 @@ export interface OcrLine {
  * has to notice it is wrong and clear it before typing.
  */
 const MIN_CONFIDENCE = 70
+
+/** Within this share of the tallest line, two lines count as the same size. */
+const TIED_HEIGHT = 0.85
+
+/** How far below a title line, in multiples of its height, a wrapped continuation can start. */
+const ADJACENT = 1.8
 
 const isLegible = ({ confidence }: OcrLine): boolean => confidence === undefined || confidence >= MIN_CONFIDENCE
 
@@ -28,6 +36,13 @@ export interface ParsedLabel {
 /** Boilerplate that shows up on almost every bottle and never belongs in a product name. */
 const BOILERPLATE =
   /(сульфит|содержит|аллерген|хранит|беремен|вред|здоров|импортёр|импортер|изготовит|разлито|адрес|лиценз|штрихкод|масса нетто|годен|срок годности|produce of|product of|contains|sulphite|sulfite|imported|bottled|best before|government warning|alc\b|vol\b|www\.|\.ru\b|\.com\b)/i
+
+/**
+ * Appellation wording. It is printed in full on most European wine labels and reads like a
+ * title, but it names the designation of origin rather than the wine.
+ */
+const APPELLATION =
+  /(denominazione|indicazione geografica|origine|controllata|protetta|appellation|contr[oô]l[ée]|geschützte|herkunft|denominación|наименовани[ея] по происхождению|защищённым географическим|\b(docg|doc|igt|igp|dop|aoc|aop)\b)/i
 
 const PRODUCER =
   /(château|chateau|domaine|bodega|cantina|tenuta|weingut|winery|wines|cellars|vineyard|винодельн|винзавод|винкомбинат|агрофирма|совхоз|АО\s|ООО\s|ПАО\s|ЗАО\s)/i
@@ -123,7 +138,7 @@ export const findExpirationDate = (text: string): string | undefined => {
 }
 
 const scoreAsName = (line: string): number => {
-  if (BOILERPLATE.test(line) || MEASUREMENT.test(line)) return -1
+  if (BOILERPLATE.test(line) || APPELLATION.test(line) || MEASUREMENT.test(line)) return -1
 
   const letters = countLetters(line)
   if (letters < 3 || letters > 40) return -1
@@ -143,18 +158,33 @@ export const pickName = (lines: OcrLine[]): string | undefined => {
   const eligible = scored.filter((line) => line.score > 0)
   if (eligible.length === 0) return undefined
 
-  const best = eligible.reduce((winner, line) =>
-    line.height !== winner.height ? (line.height > winner.height ? line : winner) : line.score > winner.score ? line : winner,
-  )
+  // Measured heights carry up to a fifth of noise, enough for the grape variety to outmeasure
+  // a title set half again as large. Everything close to the tallest counts as tied, and among
+  // tied lines the one printed highest wins, because that is where a label puts its name.
+  const tallest = Math.max(...eligible.map((line) => line.height))
+  const contenders = tallest > 0 ? eligible.filter((line) => line.height >= tallest * TIED_HEIGHT) : eligible
+
+  const best = contenders.reduce((winner, line) => {
+    if (line.top !== undefined && winner.top !== undefined && line.top !== winner.top) {
+      return line.top < winner.top ? line : winner
+    }
+    if (line.height !== winner.height) return line.height > winner.height ? line : winner
+    return line.score > winner.score ? line : winner
+  })
 
   const parts = [best.text]
   if (best.height > 0) {
+    let anchor = best
     for (let index = scored.indexOf(best) + 1; index < scored.length; index++) {
       const next = scored[index]
       // Generous ratio: at one font size, a line of ascenders and descenders measures much
       // taller than a line without them, so same-size title lines are far from equal.
       if (next.score <= 0 || next.height < best.height * 0.65) break
+      // A title continues on the very next line. Anything further down the label is a
+      // separate statement that happens to be printed at a similar size.
+      if (anchor.top !== undefined && next.top !== undefined && next.top - anchor.top > anchor.height * ADJACENT) break
       parts.push(next.text)
+      anchor = next
     }
   }
   return parts.join(' ')

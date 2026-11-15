@@ -142,6 +142,54 @@ describe('parseLabel', () => {
   })
 })
 
+describe('appellation wording', () => {
+  /** Exactly what the recognition service read off a bottle of Pinot Grigio. */
+  const CORTE = ['CORTE VECCHIA', 'PINOT GRIGIO', 'DELLE VENEZIE', 'Denominazione di Origine Protetta', '2025', 'TINAZZI']
+
+  it('never puts the designation of origin in the name', () => {
+    for (const line of ['Denominazione di Origine Protetta', 'Appellation Bordeaux Contrôlée', 'DOCG']) {
+      expect(pickName([{ text: line, height: 90 }])).toBeUndefined()
+    }
+  })
+
+  it('takes the title even when a line below it measures marginally taller', () => {
+    // Heights and positions exactly as the service reported them for this bottle: the title
+    // is set much larger than the region, yet measures 56 against 59.
+    const lines: OcrLine[] = [
+      { text: 'CORTE VECCHIA', height: 56, top: 420 },
+      { text: 'PINOT GRIGIO', height: 48, top: 981 },
+      { text: 'DELLE VENEZIE', height: 59, top: 999 },
+      { text: 'Denominazione di Origine Protetta', height: 52, top: 1017 },
+      { text: '2025', height: 11, top: 1078 },
+      { text: 'TINAZZI', height: 34, top: 1176 },
+    ]
+    expect(pickName(lines)).toBe('CORTE VECCHIA')
+  })
+
+  it('still joins a title that wrapped onto the next line', () => {
+    expect(
+      pickName([
+        { text: 'Мускат белый', height: 95, top: 600 },
+        { text: 'красного камня', height: 68, top: 700 },
+        { text: 'Вино ликёрное белое', height: 42, top: 900 },
+      ]),
+    ).toBe('Мускат белый красного камня')
+  })
+
+  it('still prefers a genuinely larger line further down', () => {
+    expect(
+      pickName([
+        { text: 'Винодельческое хозяйство', height: 30, top: 10 },
+        { text: 'Мускат белый', height: 95, top: 200 },
+      ]),
+    ).toBe('Мускат белый')
+  })
+
+  it('reads the vintage off the same label', () => {
+    expect(findYear(CORTE.map((text) => ({ text, height: 40 })))).toBe(2025)
+  })
+})
+
 describe('confidence gating', () => {
   /** What the recognizer actually returned for an ornate label on a dark, curved bottle. */
   const GUESSWORK: OcrLine[] = [
