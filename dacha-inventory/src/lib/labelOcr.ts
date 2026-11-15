@@ -1,3 +1,4 @@
+import { recognizeViaService } from './cloudOcr'
 import type { OcrLine } from './parseLabel'
 
 export type OcrStage = 'preparing' | 'reading'
@@ -27,7 +28,9 @@ const CLIP = 0.02
  * high-contrast input than on a raw phone photo of a glossy bottle.
  */
 const preprocess = async (image: Blob): Promise<Blob> => {
-  const bitmap = await createImageBitmap(image)
+  // Phones record the camera's rotation as a tag rather than rotating the pixels, so without
+  // this the recogniser is handed a photo lying on its side.
+  const bitmap = await createImageBitmap(image, { imageOrientation: 'from-image' })
   const scale = TARGET_SIDE / Math.max(bitmap.width, bitmap.height)
   const width = Math.round(bitmap.width * scale)
   const height = Math.round(bitmap.height * scale)
@@ -77,12 +80,38 @@ const preprocess = async (image: Blob): Promise<Blob> => {
   })
 }
 
+const serviceKey = import.meta.env.VITE_OCR_API_KEY?.trim()
+
+/**
+ * Reads the label, through the recognition service when one is configured and on the device
+ * otherwise. Measured on two real bottle photos, the on-device reader managed one word in
+ * eight on a flat printed label and none at all on an ornate one, while the service read both
+ * in full — so the service is tried first, with the device as the fallback when it is
+ * unreachable.
+ */
+export const recognizeLabel = async (
+  image: Blob,
+  onProgress: (progress: OcrProgress) => void,
+): Promise<OcrResult> => {
+  if (serviceKey) {
+    onProgress({ stage: 'reading', value: 0.3 })
+    try {
+      const result = await recognizeViaService(image, serviceKey)
+      onProgress({ stage: 'reading', value: 1 })
+      if (result.lines.length > 0) return result
+    } catch (error) {
+      console.error('Label service failed, falling back to on-device recognition:', error)
+    }
+  }
+  return recognizeOnDevice(image, onProgress)
+}
+
 /**
  * Reads the label text on the device. The recognizer itself is loaded on demand, and the
  * Russian and English models are fetched from the CDN on first use (~15 MB) and then cached
  * by the browser, so only the first scan is slow.
  */
-export const recognizeLabel = async (
+const recognizeOnDevice = async (
   image: Blob,
   onProgress: (progress: OcrProgress) => void,
 ): Promise<OcrResult> => {
@@ -103,6 +132,7 @@ export const recognizeLabel = async (
       .map((line) => ({
         text: line.text.replace(/\s+/g, ' ').trim(),
         height: line.bbox.y1 - line.bbox.y0,
+        top: line.bbox.y0,
         confidence: line.confidence,
       }))
       .filter((line) => line.text.length > 0)
