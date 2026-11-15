@@ -142,6 +142,46 @@ describe('parseLabel', () => {
   })
 })
 
+describe('confidence gating', () => {
+  /** What the recognizer actually returned for an ornate label on a dark, curved bottle. */
+  const GUESSWORK: OcrLine[] = [
+    { text: 'ОСВОДСТВЕННО-АГРАРН Е ОБЪЕДИНЕНИЕ', height: 28, confidence: 40 },
+    { text: 'М ССАНДР: | » fonds yo Tue', height: 61, confidence: 11 },
+    { text: 'ШОКАТ БЕЛЫЙ медь', height: 44, confidence: 0 },
+    { text: 'НОГо КАМ!', height: 46, confidence: 46 },
+  ]
+
+  it('fills nothing when every line is guesswork', () => {
+    expect(parseLabel('', GUESSWORK)).toEqual({
+      name: undefined,
+      brand: undefined,
+      year: undefined,
+      volumeMl: undefined,
+      abv: undefined,
+      expirationDate: undefined,
+    })
+  })
+
+  it('still reads a label the recognizer was sure about', () => {
+    const confident = WINE_LINES.map((line) => ({ ...line, confidence: 93 }))
+    expect(parseLabel(WINE_LABEL, confident).name).toBe('Мускат белый красного камня')
+  })
+
+  it('ignores a misread year and volume mixed in among good lines', () => {
+    const parsed = parseLabel('', [
+      { text: 'Мускат белый', height: 95, confidence: 92 },
+      { text: '2019', height: 65, confidence: 91 },
+      { text: '1899 0,75 л', height: 30, confidence: 12 },
+    ])
+    expect(parsed.year).toBe(2019)
+    expect(parsed.volumeMl).toBeUndefined()
+  })
+
+  it('trusts plain text, which carries no confidence at all', () => {
+    expect(parseLabel(WINE_LABEL).name).toBeDefined()
+  })
+})
+
 describe('toProductDraft', () => {
   it('keeps vintages apart by putting the year in the name', () => {
     const draft = toProductDraft({ name: 'Мускат белый', year: 2019 }, 'wine')

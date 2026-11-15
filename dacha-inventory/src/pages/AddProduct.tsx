@@ -228,6 +228,8 @@ export default function AddProduct() {
     parsed?.abv ? `крепость ${parsed.abv}%` : null,
   ].filter(Boolean) as string[]
 
+  const readable = parsed !== null && Object.values(parsed).some((value) => value !== undefined)
+
   return (
     <div className="max-w-md mx-auto pb-6">
       <h1 className="text-2xl font-bold mb-6 text-gray-800 dark:text-white">Добавить позицию</h1>
@@ -320,16 +322,26 @@ export default function AddProduct() {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
                 <ScanText size={18} className="text-purple-600" />
-                Этикетка распознана
+                {readable ? 'Этикетка распознана' : 'Надпись не разобрать'}
               </span>
-              <button
-                type="button"
-                onClick={() => applyDraft(parsed, category, true)}
-                className="text-xs text-blue-600"
-              >
-                Подставить заново
-              </button>
+              {readable && (
+                <button
+                  type="button"
+                  onClick={() => applyDraft(parsed, category, true)}
+                  className="text-xs text-blue-600"
+                >
+                  Подставить заново
+                </button>
+              )}
             </div>
+
+            {!readable && (
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Буквы на этой этикетке прочитать не удалось, поэтому поля оставлены пустыми —
+                лучше пустые, чем заполненные наугад. Впишите название вручную или снимите
+                этикетку ближе, ровнее и при хорошем свете.
+              </p>
+            )}
 
             {filledFields.length > 0 && (
               <p className="text-sm text-gray-600 dark:text-gray-400">

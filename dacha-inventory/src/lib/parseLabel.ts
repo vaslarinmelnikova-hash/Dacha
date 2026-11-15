@@ -2,7 +2,19 @@ export interface OcrLine {
   text: string
   /** Height of the line in pixels — the recognizer's best proxy for how prominent the text is. */
   height: number
+  /** 0…100 from the recognizer. Absent when the lines came from plain text. */
+  confidence?: number
 }
+
+/**
+ * Below this the recognizer is guessing at shapes rather than reading letters. On a readable
+ * label every line lands in the nineties; on an ornate label photographed round the curve of a
+ * dark bottle, nothing clears it. Guessed text is worse than an empty field, because the user
+ * has to notice it is wrong and clear it before typing.
+ */
+const MIN_CONFIDENCE = 70
+
+const isLegible = ({ confidence }: OcrLine): boolean => confidence === undefined || confidence >= MIN_CONFIDENCE
 
 export interface ParsedLabel {
   name?: string
@@ -152,16 +164,19 @@ export const pickBrand = (lines: OcrLine[], name?: string): string | undefined =
   lines.find(({ text }) => text !== name && PRODUCER.test(text) && countLetters(text) <= 40)?.text
 
 export const parseLabel = (text: string, lines?: OcrLine[]): ParsedLabel => {
-  const candidates = lines?.length ? lines : normalizeLines(text)
+  const all = lines?.length ? lines : normalizeLines(text)
+  const candidates = all.filter(isLegible)
+  const rated = all.some((line) => line.confidence !== undefined)
+  const scanned = rated ? candidates.map((line) => line.text).join('\n') : text
   const name = pickName(candidates)
 
   return {
     name,
     brand: pickBrand(candidates, name),
     year: findYear(candidates),
-    volumeMl: findVolumeMl(text),
-    abv: findAbv(text),
-    expirationDate: findExpirationDate(text),
+    volumeMl: findVolumeMl(scanned),
+    abv: findAbv(scanned),
+    expirationDate: findExpirationDate(scanned),
   }
 }
 
