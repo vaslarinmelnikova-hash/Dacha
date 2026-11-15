@@ -16,6 +16,13 @@ export interface OcrResult {
 const TARGET_SIDE = 1600
 
 /**
+ * Share of the darkest and brightest pixels excluded when measuring the range to stretch.
+ * Dark glass and a blown-out highlight otherwise pin the range at 0…255, where stretching
+ * is arithmetically identical to leaving the photo alone.
+ */
+const CLIP = 0.02
+
+/**
  * Grayscale + contrast stretch at a fixed size. Tesseract is far more accurate on flat,
  * high-contrast input than on a raw phone photo of a glossy bottle.
  */
@@ -38,18 +45,27 @@ const preprocess = async (image: Blob): Promise<Blob> => {
   const pixels = frame.data
   const luminance = new Uint8ClampedArray(pixels.length / 4)
 
-  let min = 255
-  let max = 0
+  const histogram = new Uint32Array(256)
   for (let i = 0; i < luminance.length; i++) {
     const value = (pixels[i * 4] * 299 + pixels[i * 4 + 1] * 587 + pixels[i * 4 + 2] * 114) / 1000
     luminance[i] = value
-    if (value < min) min = value
-    if (value > max) max = value
+    histogram[luminance[i]]++
   }
 
-  const span = Math.max(1, max - min)
+  const percentile = (share: number): number => {
+    const target = luminance.length * share
+    let seen = 0
+    for (let level = 0; level < 256; level++) {
+      seen += histogram[level]
+      if (seen >= target) return level
+    }
+    return 255
+  }
+
+  const min = percentile(CLIP)
+  const span = Math.max(1, percentile(1 - CLIP) - min)
   for (let i = 0; i < luminance.length; i++) {
-    const stretched = ((luminance[i] - min) / span) * 255
+    const stretched = Math.min(255, Math.max(0, ((luminance[i] - min) / span) * 255))
     pixels[i * 4] = stretched
     pixels[i * 4 + 1] = stretched
     pixels[i * 4 + 2] = stretched
@@ -84,7 +100,11 @@ export const recognizeLabel = async (
     const lines: OcrLine[] = (data.blocks ?? [])
       .flatMap((block) => block.paragraphs)
       .flatMap((paragraph) => paragraph.lines)
-      .map((line) => ({ text: line.text.replace(/\s+/g, ' ').trim(), height: line.bbox.y1 - line.bbox.y0 }))
+      .map((line) => ({
+        text: line.text.replace(/\s+/g, ' ').trim(),
+        height: line.bbox.y1 - line.bbox.y0,
+        confidence: line.confidence,
+      }))
       .filter((line) => line.text.length > 0)
 
     return { text: data.text, lines }
