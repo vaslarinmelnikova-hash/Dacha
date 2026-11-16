@@ -34,6 +34,7 @@ export default function AddProduct() {
   const galleryInput = useRef<HTMLInputElement>(null)
   const cameraInput = useRef<HTMLInputElement>(null)
   const scanToken = useRef(0)
+  const autofilled = useRef<string[]>([])
 
   const [preview, setPreview] = useState('')
   const [photoFile, setPhotoFile] = useState<Blob | null>(null)
@@ -95,13 +96,30 @@ export default function AddProduct() {
       filled.push('expirationDate')
     }
 
+    autofilled.current = filled
     setFilledFields(filled)
+  }
+
+  /**
+   * Takes back what the previous photo put in the form. Without this, a value read off one
+   * bottle survives into the next one, because autofill refuses to overwrite a filled field
+   * and so quietly leaves the stale date or name in place.
+   */
+  const clearAutofilled = () => {
+    for (const field of autofilled.current) {
+      if (field === 'name') setName('')
+      else if (field === 'brand') setBrand('')
+      else if (field === 'manufactureDate') setManufactureDate('')
+      else if (field === 'expirationDate') setExpirationDate('')
+    }
+    autofilled.current = []
+    setFilledFields([])
   }
 
   const scan = async (image: Blob, forCategory: Category) => {
     const token = ++scanToken.current
     setScanError('')
-    setFilledFields([])
+    clearAutofilled()
     setProgress({ stage: 'preparing', value: 0 })
 
     try {
@@ -149,11 +167,11 @@ export default function AddProduct() {
 
   const clearPhoto = () => {
     cancelScan()
+    clearAutofilled()
     setPreview('')
     setPhotoFile(null)
     setParsed(null)
     setRawText('')
-    setFilledFields([])
     setScanError('')
   }
 
