@@ -1,15 +1,55 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { HistoryEntry, Product } from '../types'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY
+const url = import.meta.env.VITE_SUPABASE_URL?.trim()
+const key = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
 
-export const supabaseConfigError =
-  url && key
-    ? null
-    : 'Не заданы переменные окружения VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY.'
+const HOST_ONLY = /^https:\/\/[\w-]+(\.[\w-]+)+(:\d+)?\/?$/
 
-export const supabase = createClient(url ?? 'http://localhost', key ?? 'missing-key')
+const stub = () => createClient('http://localhost', 'missing-key')
+
+// createClient rejects a malformed URL by throwing while this module is still being imported,
+// which leaves a blank page and nothing to read. Catching it turns a typo in the deployment
+// settings into a message on screen.
+const connect = (): { client: SupabaseClient; error: string | null } => {
+  if (!url || !key) {
+    return {
+      client: stub(),
+      error: 'Не заданы переменные окружения VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY.',
+    }
+  }
+  // A value pasted with anything trailing it — a comma, a second variable, a stray word — still
+  // parses as a URL, so createClient accepts it and every request quietly fails DNS instead.
+  if (!HOST_ONLY.test(url)) {
+    return {
+      client: stub(),
+      error:
+        `В VITE_SUPABASE_URL лишний текст: «${url}».\n\n` +
+        'Значением должен быть только адрес, без запятых, пробелов и имени второй переменной. ' +
+        'Например: https://имя-проекта.supabase.co',
+    }
+  }
+  if (/\s/.test(key)) {
+    return {
+      client: stub(),
+      error: 'В VITE_SUPABASE_ANON_KEY попали пробелы или перенос строки. Вставьте ключ одной строкой.',
+    }
+  }
+  try {
+    return { client: createClient(url, key), error: null }
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error)
+    return {
+      client: stub(),
+      error: `Неверное значение VITE_SUPABASE_URL (${url}). ${details}`,
+    }
+  }
+}
+
+const connection = connect()
+
+export const supabase = connection.client
+export const supabaseConfigError = connection.error
 
 export const uploadPhoto = async (file: Blob, fileName: string): Promise<string> => {
   const { data, error } = await supabase.storage
