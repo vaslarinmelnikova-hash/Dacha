@@ -18,6 +18,7 @@ const CATEGORIES: { value: Category; label: string }[] = [
 const FIELD_LABELS: Record<string, string> = {
   name: 'Название',
   brand: 'Бренд',
+  category: 'Категория',
   manufactureDate: 'Изготовлено',
   expirationDate: 'Годен до',
 }
@@ -35,6 +36,7 @@ export default function AddProduct() {
   const cameraInput = useRef<HTMLInputElement>(null)
   const scanToken = useRef(0)
   const autofilled = useRef<string[]>([])
+  const categoryChosen = useRef(false)
 
   const [preview, setPreview] = useState('')
   const [photoFile, setPhotoFile] = useState<Blob | null>(null)
@@ -75,9 +77,18 @@ export default function AddProduct() {
    * Overwriting happens only when the user asks for it with "Подставить заново".
    */
   const applyDraft = (label: ParsedLabel, forCategory: Category, overwrite = false) => {
-    const draft = toProductDraft(label, forCategory)
-    const current = typed.current
     const filled: string[] = []
+
+    // The category is settled before the rest, because a wine keeps its vintage in the name.
+    let effective = forCategory
+    if (label.category && label.category !== forCategory && (overwrite || !categoryChosen.current)) {
+      effective = label.category
+      setCategory(effective)
+      filled.push('category')
+    }
+
+    const draft = toProductDraft(label, effective)
+    const current = typed.current
 
     if (draft.name && (overwrite || !current.name.trim())) {
       setName(draft.name)
@@ -111,6 +122,7 @@ export default function AddProduct() {
       else if (field === 'brand') setBrand('')
       else if (field === 'manufactureDate') setManufactureDate('')
       else if (field === 'expirationDate') setExpirationDate('')
+      else if (field === 'category') setCategory('canned_food')
     }
     autofilled.current = []
     setFilledFields([])
@@ -407,7 +419,10 @@ export default function AddProduct() {
             <label className={LABEL_CLASS}>Категория</label>
             <select
               value={category}
-              onChange={(event) => setCategory(event.target.value as Category)}
+              onChange={(event) => {
+                categoryChosen.current = true
+                setCategory(event.target.value as Category)
+              }}
               className={INPUT_CLASS}
             >
               {CATEGORIES.map(({ value, label }) => (
