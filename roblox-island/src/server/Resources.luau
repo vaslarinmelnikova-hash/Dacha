@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Targeting = require(script.Parent.Targeting)
 local WorldGen = require(script.Parent.WorldGen)
 
 local Resources = {}
@@ -121,13 +122,9 @@ end
 -- Nearest node in front of the character within `range` studs.
 function Resources.FindTarget(root: BasePart, range: number): Model?
 	local best, bestDistance = nil, math.huge
-	local look = root.CFrame.LookVector
 	for _, model in folder:GetChildren() do
-		local offset = model:GetPivot().Position - root.Position
-		local flat = Vector3.new(offset.X, 0, offset.Z)
-		local distance = flat.Magnitude
-		local inFront = distance < 3 or look:Dot(flat.Unit) > 0.2
-		if distance <= range and math.abs(offset.Y) < 15 and inFront and distance < bestDistance then
+		local distance = Targeting.InFront(root, model:GetPivot().Position, range)
+		if distance and distance < bestDistance then
 			best, bestDistance = model, distance
 		end
 	end

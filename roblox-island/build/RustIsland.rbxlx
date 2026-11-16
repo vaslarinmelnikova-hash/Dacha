@@ -20,15 +20,20 @@
       </Item>
       <Item class="RemoteEvent" referent="4">
         <Properties>
+          <string name="Name">Container</string>
+        </Properties>
+      </Item>
+      <Item class="RemoteEvent" referent="5">
+        <Properties>
           <string name="Name">Notify</string>
         </Properties>
       </Item>
     </Item>
-    <Item class="Folder" referent="5">
+    <Item class="Folder" referent="6">
       <Properties>
         <string name="Name">Shared</string>
       </Properties>
-      <Item class="ModuleScript" referent="6">
+      <Item class="ModuleScript" referent="7">
         <Properties>
           <string name="Name">Config</string>
           <string name="Source"><![CDATA[local Config = {}
@@ -41,12 +46,14 @@ Config.Island = {
 	MaxHeight = 30,
 }
 
-Config.Items = { "Wood", "Stone", "Berries" }
+Config.Items = { "Wood", "Stone", "Berries", "Meat", "CookedMeat" }
 
 Config.ItemNames = {
 	Wood = "Дерево",
 	Stone = "Камень",
 	Berries = "Ягоды",
+	Meat = "Сырое мясо",
+	CookedMeat = "Жареное мясо",
 }
 
 -- Amount: how much the node holds before it is used up.
@@ -57,30 +64,62 @@ Config.Resources = {
 }
 
 Config.GatherRange = 9
+Config.MeleeRange = 7
+Config.PvP = true
 
 Config.Tools = {
 	Rock = {
 		Display = "Камень",
 		Cooldown = 0.6,
+		Damage = 6,
 		Yield = { Wood = 2, Stone = 2, Berries = 2 },
 	},
 	StoneHatchet = {
 		Display = "Каменный топор",
 		Cooldown = 0.6,
+		Damage = 14,
 		Yield = { Wood = 6, Stone = 1, Berries = 2 },
 	},
 	StonePickaxe = {
 		Display = "Каменная кирка",
 		Cooldown = 0.6,
+		Damage = 10,
 		Yield = { Wood = 1, Stone = 5, Berries = 2 },
 	},
 }
 
+Config.Animals = {
+	Boar = {
+		Display = "Кабан",
+		Health = 40,
+		Count = 12,
+		Respawn = 120,
+		WalkSpeed = 6,
+		RunSpeed = 13,
+		Damage = 8,
+		AttackRange = 5,
+		AttackCooldown = 1.5,
+		AngryTime = 12,
+		Meat = 4,
+	},
+}
+
+-- Kind: "Tool" goes to the backpack, "Build" is placed in front of the player,
+-- "Cook" turns Cost into Gives and must be done next to a campfire.
 Config.Recipes = {
 	{ Id = "StoneHatchet", Kind = "Tool", Display = "Каменный топор", Cost = { Wood = 20, Stone = 10 } },
 	{ Id = "StonePickaxe", Kind = "Tool", Display = "Каменная кирка", Cost = { Wood = 20, Stone = 15 } },
 	{ Id = "Campfire", Kind = "Build", Display = "Костёр", Cost = { Wood = 30, Stone = 5 } },
 	{ Id = "WoodWall", Kind = "Build", Display = "Деревянная стена", Cost = { Wood = 40 } },
+	{ Id = "DoorWall", Kind = "Build", Display = "Стена с дверью", Cost = { Wood = 50, Stone = 5 } },
+	{ Id = "Chest", Kind = "Build", Display = "Ящик", Cost = { Wood = 40 } },
+	{ Id = "CookMeat", Kind = "Cook", Display = "Пожарить мясо", Cost = { Meat = 1 }, Gives = { CookedMeat = 1 } },
+}
+
+-- Eaten in this order when the player presses the eat key.
+Config.Food = {
+	{ Item = "CookedMeat", Hunger = 30, Heal = 10 },
+	{ Item = "Berries", Hunger = 10, Heal = 2 },
 }
 
 Config.Survival = {
@@ -88,14 +127,30 @@ Config.Survival = {
 	HungerDrainEvery = 3,
 	HungerDrainAmount = 1,
 	StarveDamage = 2,
-	BerryFood = 10,
-	BerryHeal = 2,
 	CampfireRadius = 12,
 	CampfireHeal = 1,
 	RespawnDelay = 5,
+	LootBagLifetime = 300,
 }
 
 Config.DayLengthSeconds = 600
+
+Config.Save = {
+	DataStore = "RustIsland_v1",
+	AutosaveInterval = 120,
+}
+
+-- Put the Game Pass id from the Creator Dashboard here; while it is 0 the pass can't be bought.
+Config.GamePasses = {
+	{
+		Key = "VIP",
+		Id = 0,
+		Display = "VIP",
+		Description = "Двойная добыча ресурсов и каменный топор при каждом появлении",
+	},
+}
+
+Config.VipYieldMultiplier = 2
 
 return Config
 ]]></string>
@@ -103,18 +158,255 @@ return Config
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="7">
+  <Item class="ServerScriptService" referent="8">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="8">
+    <Item class="Folder" referent="9">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="ModuleScript" referent="9">
+      <Item class="ModuleScript" referent="10">
+        <Properties>
+          <string name="Name">Animals</string>
+          <string name="Source"><![CDATA[local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Targeting = require(script.Parent.Targeting)
+local WorldGen = require(script.Parent.WorldGen)
+
+local Animals = {}
+
+export type Animal = {
+	kind: string,
+	model: Model,
+	health: number,
+	goal: Vector3?,
+	idleUntil: number,
+	angryAt: Player?,
+	angryUntil: number,
+	lastAttack: number,
+}
+
+local rng = Random.new()
+local animals: { [Model]: Animal } = {}
+
+local folder = Instance.new("Folder")
+folder.Name = "Animals"
+folder.Parent = workspace
+
+local function part(model: Model, size: Vector3, offset: CFrame, color: Color3)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.Size = size
+	p.Color = color
+	p.Material = Enum.Material.Fabric
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.CFrame = offset
+	p.Parent = model
+end
+
+-- Built around the origin facing -Z, then moved into place with PivotTo.
+local function buildBoar(): Model
+	local model = Instance.new("Model")
+	model.Name = "Boar"
+	local fur = Color3.fromRGB(90, 62, 45)
+	local dark = Color3.fromRGB(50, 35, 28)
+	part(model, Vector3.new(2.6, 2.2, 4.4), CFrame.new(0, 2.1, 0), fur)
+	part(model, Vector3.new(1.9, 1.7, 1.6), CFrame.new(0, 2.3, -2.7), fur)
+	part(model, Vector3.new(1, 0.8, 0.6), CFrame.new(0, 2, -3.7), dark)
+	part(model, Vector3.new(0.2, 0.2, 0.7), CFrame.new(-0.5, 1.7, -3.7), Color3.fromRGB(235, 230, 210))
+	part(model, Vector3.new(0.2, 0.2, 0.7), CFrame.new(0.5, 1.7, -3.7), Color3.fromRGB(235, 230, 210))
+	for _, x in { -0.9, 0.9 } do
+		for _, z in { -1.5, 1.5 } do
+			part(model, Vector3.new(0.6, 1.2, 0.6), CFrame.new(x, 0.6, z), dark)
+		end
+	end
+	model.WorldPivot = CFrame.new()
+	return model
+end
+
+function Animals.Spawn(kind: string)
+	local ground = WorldGen.RandomSurface({ Enum.Material.Grass })
+	if not ground then
+		return
+	end
+	local model = buildBoar()
+	model:PivotTo(CFrame.new(ground) * CFrame.Angles(0, rng:NextNumber(0, math.pi * 2), 0))
+	model:SetAttribute("Kind", kind)
+	model.Parent = folder
+	animals[model] = {
+		kind = kind,
+		model = model,
+		health = Config.Animals[kind].Health,
+		goal = nil,
+		idleUntil = 0,
+		angryAt = nil,
+		angryUntil = 0,
+		lastAttack = 0,
+	}
+end
+
+function Animals.SpawnAll()
+	for kind, def in Config.Animals do
+		for _ = 1, def.Count do
+			Animals.Spawn(kind)
+		end
+	end
+end
+
+function Animals.FindTarget(root: BasePart, range: number): (Animal?, number)
+	local best, bestDistance = nil, math.huge
+	for model, animal in animals do
+		local distance = Targeting.InFront(root, model:GetPivot().Position, range)
+		if distance and distance < bestDistance then
+			best, bestDistance = animal, distance
+		end
+	end
+	return best, bestDistance
+end
+
+local function flash(model: Model)
+	local originals = {}
+	for _, p in model:GetChildren() do
+		if p:IsA("BasePart") then
+			originals[p] = p.Color
+			p.Color = Color3.fromRGB(200, 60, 60)
+		end
+	end
+	task.delay(0.12, function()
+		for p, color in originals do
+			p.Color = color
+		end
+	end)
+end
+
+-- Returns the meat dropped if this hit killed the animal, otherwise 0.
+function Animals.Damage(animal: Animal, amount: number, attacker: Player): number
+	if not animals[animal.model] then
+		return 0
+	end
+	local def = Config.Animals[animal.kind]
+	animal.health -= amount
+	if animal.health <= 0 then
+		animals[animal.model] = nil
+		animal.model:Destroy()
+		task.delay(def.Respawn, Animals.Spawn, animal.kind)
+		return def.Meat
+	end
+	animal.angryAt = attacker
+	animal.angryUntil = os.clock() + def.AngryTime
+	flash(animal.model)
+	return 0
+end
+
+local function rootOf(player: Player?): BasePart?
+	local character = player and player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return nil
+	end
+	return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+end
+
+local function pickWanderGoal(from: Vector3): Vector3?
+	local angle = rng:NextNumber(0, math.pi * 2)
+	local distance = rng:NextNumber(10, 30)
+	local ground = WorldGen.GroundBelow(from + Vector3.new(math.cos(angle) * distance, 0, math.sin(angle) * distance))
+	if ground and ground.Y > Config.Island.SeaLevel + 1 then
+		return ground
+	end
+	return nil
+end
+
+local function step(animal: Animal, dt: number, now: number)
+	local def = Config.Animals[animal.kind]
+	local position = animal.model:GetPivot().Position
+	local speed = def.WalkSpeed
+	local goal = animal.goal
+
+	local enemy = if now < animal.angryUntil then rootOf(animal.angryAt) else nil
+	if enemy and (enemy.Position - position).Magnitude < 80 then
+		goal = enemy.Position
+		speed = def.RunSpeed
+		local reach = Vector3.new(enemy.Position.X - position.X, 0, enemy.Position.Z - position.Z).Magnitude
+		if reach <= def.AttackRange and now - animal.lastAttack >= def.AttackCooldown then
+			animal.lastAttack = now
+			local humanoid = enemy.Parent and enemy.Parent:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid:TakeDamage(def.Damage)
+			end
+		end
+		if reach <= def.AttackRange * 0.8 then
+			return
+		end
+	else
+		animal.angryAt = nil
+		if now < animal.idleUntil then
+			return
+		end
+		if not goal then
+			animal.goal = pickWanderGoal(position)
+			if not animal.goal then
+				animal.idleUntil = now + 1
+			end
+			return
+		end
+	end
+
+	local flat = Vector3.new(goal.X - position.X, 0, goal.Z - position.Z)
+	if flat.Magnitude < 1 then
+		animal.goal = nil
+		animal.idleUntil = now + rng:NextNumber(1, 5)
+		return
+	end
+
+	local direction = flat.Unit
+	local nextGround = WorldGen.GroundBelow(position + direction * math.min(speed * dt, flat.Magnitude))
+	if not nextGround or nextGround.Y < Config.Island.SeaLevel + 0.5 then
+		animal.goal = nil
+		animal.idleUntil = now + 1
+		return
+	end
+	animal.model:PivotTo(CFrame.lookAt(nextGround, nextGround + direction))
+end
+
+function Animals.Run()
+	task.spawn(function()
+		while true do
+			local dt = task.wait(0.1)
+			local now = os.clock()
+			for _, animal in animals do
+				step(animal, dt, now)
+			end
+		end
+	end)
+
+	Players.PlayerRemoving:Connect(function(player)
+		for _, animal in animals do
+			if animal.angryAt == player then
+				animal.angryAt = nil
+			end
+		end
+	end)
+end
+
+return Animals
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="11">
         <Properties>
           <string name="Name">Builds</string>
-          <string name="Source"><![CDATA[local WorldGen = require(script.Parent.WorldGen)
+          <string name="Source"><![CDATA[local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local Containers = require(script.Parent.Containers)
+local WorldGen = require(script.Parent.WorldGen)
+
+local Remotes = ReplicatedStorage.Remotes
 
 local Builds = {}
 
@@ -187,6 +479,76 @@ function makers.WoodWall(model: Model, base: CFrame)
 	}).Parent = model
 end
 
+local wallColor = Color3.fromRGB(140, 100, 60)
+
+function makers.DoorWall(model: Model, base: CFrame, owner: Player)
+	for _, x in { -3.5, 3.5 } do
+		anchoredPart({
+			Size = Vector3.new(3, 8, 1),
+			CFrame = base * CFrame.new(x, 3.5, 0),
+			Material = Enum.Material.WoodPlanks,
+			Color = wallColor,
+		}).Parent = model
+	end
+	anchoredPart({
+		Size = Vector3.new(4, 1, 1),
+		CFrame = base * CFrame.new(0, 7, 0),
+		Material = Enum.Material.WoodPlanks,
+		Color = wallColor,
+	}).Parent = model
+
+	local closed = base * CFrame.new(0, 3, 0)
+	local hinge = base * CFrame.new(-2, 3, 0)
+	local opened = hinge * CFrame.Angles(0, math.rad(-95), 0) * CFrame.new(2, 0, 0)
+
+	local door = anchoredPart({
+		Name = "Door",
+		Size = Vector3.new(4, 7, 0.4),
+		CFrame = closed,
+		Material = Enum.Material.Wood,
+		Color = Color3.fromRGB(105, 70, 40),
+	})
+	door.Parent = model
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "Открыть"
+	prompt.ObjectText = "Дверь"
+	prompt.MaxActivationDistance = 8
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = door
+
+	local isOpen = false
+	prompt.Triggered:Connect(function(player)
+		if player.UserId ~= owner.UserId then
+			Remotes.Notify:FireClient(player, "Дверь заперта")
+			return
+		end
+		isOpen = not isOpen
+		prompt.ActionText = isOpen and "Закрыть" or "Открыть"
+		TweenService:Create(door, TweenInfo.new(0.35, Enum.EasingStyle.Quad), {
+			CFrame = isOpen and opened or closed,
+		}):Play()
+	end)
+end
+
+function makers.Chest(model: Model, base: CFrame, owner: Player)
+	local box = anchoredPart({
+		Name = "Box",
+		Size = Vector3.new(3.4, 1.8, 2.2),
+		CFrame = base * CFrame.new(0, 0.9, 0),
+		Material = Enum.Material.WoodPlanks,
+		Color = Color3.fromRGB(125, 85, 50),
+	})
+	box.Parent = model
+	anchoredPart({
+		Size = Vector3.new(3.6, 0.4, 2.4),
+		CFrame = base * CFrame.new(0, 2, 0),
+		Material = Enum.Material.Wood,
+		Color = Color3.fromRGB(95, 62, 38),
+	}).Parent = model
+	Containers.Register(model, box, "Ящик", owner.UserId)
+end
+
 -- Places a structure a few studs in front of the character, snapped to the ground.
 function Builds.Place(player: Player, id: string): boolean
 	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -204,7 +566,7 @@ function Builds.Place(player: Player, id: string): boolean
 	local model = Instance.new("Model")
 	model.Name = id
 	model:SetAttribute("Owner", player.UserId)
-	makers[id](model, CFrame.lookAt(ground, ground + forward))
+	makers[id](model, CFrame.lookAt(ground, ground + forward), player)
 	model.Parent = folder
 	return true
 end
@@ -222,7 +584,176 @@ return Builds
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="10">
+      <Item class="ModuleScript" referent="12">
+        <Properties>
+          <string name="Name">Containers</string>
+          <string name="Source"><![CDATA[local Debris = game:GetService("Debris")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local PlayerData = require(script.Parent.PlayerData)
+
+local Remotes = ReplicatedStorage.Remotes
+
+local Containers = {}
+
+type Container = {
+	id: string,
+	model: Model,
+	title: string,
+	owner: number?,
+	items: { [string]: number },
+	removeWhenEmpty: boolean,
+	viewers: { [Player]: boolean },
+}
+
+local containers: { [string]: Container } = {}
+
+local lootFolder = Instance.new("Folder")
+lootFolder.Name = "LootBags"
+lootFolder.Parent = workspace
+
+local function canAccess(container: Container, player: Player): boolean
+	return container.owner == nil or container.owner == player.UserId
+end
+
+local function isNear(container: Container, player: Player): boolean
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	return root ~= nil and (root.Position - container.model:GetPivot().Position).Magnitude <= 14
+end
+
+local function broadcast(container: Container)
+	for viewer in container.viewers do
+		if viewer.Parent then
+			Remotes.Container:FireClient(viewer, "Update", container.id, container.items)
+		end
+	end
+end
+
+-- Makes `model` openable through a ProximityPrompt on `promptPart`.
+-- `owner` is a UserId that may open it; nil means anyone can.
+function Containers.Register(model: Model, promptPart: BasePart, title: string, owner: number?, items: { [string]: number }?, removeWhenEmpty: boolean?)
+	local id = HttpService:GenerateGUID(false)
+	local container: Container = {
+		id = id,
+		model = model,
+		title = title,
+		owner = owner,
+		items = {},
+		removeWhenEmpty = removeWhenEmpty == true,
+		viewers = {},
+	}
+	for _, item in Config.Items do
+		container.items[item] = items and items[item] or 0
+	end
+	containers[id] = container
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "Открыть"
+	prompt.ObjectText = title
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.MaxActivationDistance = 8
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = promptPart
+
+	prompt.Triggered:Connect(function(player)
+		if not canAccess(container, player) then
+			Remotes.Notify:FireClient(player, "Это чужой " .. string.lower(title))
+			return
+		end
+		container.viewers[player] = true
+		Remotes.Container:FireClient(player, "Open", id, container.items, title, model)
+	end)
+
+	model.Destroying:Connect(function()
+		containers[id] = nil
+		for viewer in container.viewers do
+			if viewer.Parent then
+				Remotes.Container:FireClient(viewer, "Close", id)
+			end
+		end
+	end)
+end
+
+local function isEmpty(container: Container): boolean
+	for _, amount in container.items do
+		if amount > 0 then
+			return false
+		end
+	end
+	return true
+end
+
+-- Moves every unit of `item` between the player and the container.
+function Containers.Transfer(player: Player, id: unknown, item: unknown, toContainer: boolean)
+	local container = typeof(id) == "string" and containers[id]
+	if not container or typeof(item) ~= "string" or container.items[item] == nil then
+		return
+	end
+	if not canAccess(container, player) or not isNear(container, player) then
+		return
+	end
+
+	if toContainer then
+		local amount = PlayerData.GetItem(player, item)
+		PlayerData.AddItem(player, item, -amount)
+		container.items[item] += amount
+	else
+		local amount = container.items[item]
+		container.items[item] = 0
+		PlayerData.AddItem(player, item, amount)
+	end
+
+	broadcast(container)
+	if container.removeWhenEmpty and isEmpty(container) then
+		container.model:Destroy()
+	end
+end
+
+function Containers.StopViewing(player: Player, id: unknown)
+	local container = typeof(id) == "string" and containers[id]
+	if container then
+		container.viewers[player] = nil
+	end
+end
+
+function Containers.DropLootBag(position: Vector3, items: { [string]: number }, ownerName: string)
+	if next(items) == nil then
+		return
+	end
+
+	local model = Instance.new("Model")
+	model.Name = "LootBag"
+
+	local bag = Instance.new("Part")
+	bag.Name = "Bag"
+	bag.Shape = Enum.PartType.Ball
+	bag.Size = Vector3.new(2.2, 2.2, 2.2)
+	bag.Color = Color3.fromRGB(120, 95, 60)
+	bag.Material = Enum.Material.Fabric
+	bag.Anchored = true
+	bag.CanCollide = false
+	bag.CFrame = CFrame.new(position + Vector3.new(0, 1, 0))
+	bag.Parent = model
+
+	model.Parent = lootFolder
+	Containers.Register(model, bag, "Рюкзак " .. ownerName, nil, items, true)
+	Debris:AddItem(model, Config.Survival.LootBagLifetime)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	for _, container in containers do
+		container.viewers[player] = nil
+	end
+end)
+
+return Containers
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Script" referent="13">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -231,8 +762,13 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Animals = require(script.Parent.Animals)
 local Builds = require(script.Parent.Builds)
+local Containers = require(script.Parent.Containers)
+local PlayerData = require(script.Parent.PlayerData)
 local Resources = require(script.Parent.Resources)
+local Shop = require(script.Parent.Shop)
+local Targeting = require(script.Parent.Targeting)
 local Tools = require(script.Parent.Tools)
 local WorldGen = require(script.Parent.WorldGen)
 
@@ -243,28 +779,63 @@ local function notify(player: Player, text: string)
 	Remotes.Notify:FireClient(player, text)
 end
 
-local function addItem(player: Player, item: string, amount: number)
-	player:SetAttribute(item, ((player:GetAttribute(item) :: number?) or 0) + amount)
+local function rootOf(player: Player): BasePart?
+	local character = player.Character
+	return character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 end
 
-local function clearInventory(player: Player)
-	for _, item in Config.Items do
-		player:SetAttribute(item, 0)
+local function findPlayerTarget(attacker: Player, root: BasePart): (Humanoid?, number)
+	local best, bestDistance = nil, math.huge
+	for _, other in Players:GetPlayers() do
+		local otherRoot = other ~= attacker and rootOf(other)
+		local humanoid = otherRoot and otherRoot.Parent:FindFirstChildOfClass("Humanoid")
+		if otherRoot and humanoid and humanoid.Health > 0 then
+			local distance = Targeting.InFront(root, otherRoot.Position, Config.MeleeRange)
+			if distance and distance < bestDistance then
+				best, bestDistance = humanoid, distance
+			end
+		end
 	end
+	return best, bestDistance
 end
 
 local function onSwing(player: Player, _tool: Tool, toolId: string)
-	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local root = rootOf(player)
 	if not root then
 		return
 	end
+	local def = Config.Tools[toolId]
+
+	local victim, victimDistance = nil, math.huge
+	if Config.PvP then
+		victim, victimDistance = findPlayerTarget(player, root)
+	end
+	local animal, animalDistance = Animals.FindTarget(root, Config.MeleeRange)
+
+	if victim and victimDistance <= animalDistance then
+		victim:TakeDamage(def.Damage)
+		return
+	end
+
+	if animal then
+		local meat = Animals.Damage(animal, def.Damage, player)
+		if meat > 0 then
+			PlayerData.AddItem(player, "Meat", meat)
+			notify(player, string.format("+%d %s", meat, Config.ItemNames.Meat))
+		end
+		return
+	end
+
 	local target = Resources.FindTarget(root, Config.GatherRange)
 	if not target then
 		return
 	end
-	local item, amount = Resources.Hit(target, Config.Tools[toolId].Yield)
+	local item, amount = Resources.Hit(target, def.Yield)
 	if item and amount > 0 then
-		addItem(player, item, amount)
+		if Shop.Has(player, "VIP") then
+			amount *= Config.VipYieldMultiplier
+		end
+		PlayerData.AddItem(player, item, amount)
 		notify(player, string.format("+%d %s", amount, Config.ItemNames[item]))
 	elseif item then
 		notify(player, "Этим инструментом тут ничего не добыть")
@@ -273,15 +844,6 @@ end
 
 local function giveTool(player: Player, id: string)
 	Tools.Create(id, onSwing).Parent = player:WaitForChild("Backpack")
-end
-
-local function canAfford(player: Player, cost: { [string]: number }): boolean
-	for item, amount in cost do
-		if (player:GetAttribute(item) or 0) < amount then
-			return false
-		end
-	end
-	return true
 end
 
 local function craft(player: Player, recipeId: string)
@@ -294,24 +856,36 @@ local function craft(player: Player, recipeId: string)
 	if not recipe then
 		return
 	end
-	if not canAfford(player, recipe.Cost) then
+	if not PlayerData.CanAfford(player, recipe.Cost) then
 		notify(player, "Не хватает ресурсов")
 		return
 	end
+
 	if recipe.Kind == "Tool" then
-		if Tools.Has(player, recipe.Id) then
+		if PlayerData.HasTool(player, recipe.Id) then
 			notify(player, "У тебя уже есть " .. recipe.Display)
 			return
 		end
+		PlayerData.AddTool(player, recipe.Id)
 		giveTool(player, recipe.Id)
+	elseif recipe.Kind == "Cook" then
+		local root = rootOf(player)
+		if not root or not Builds.NearCampfire(root.Position, survival.CampfireRadius) then
+			notify(player, "Встань рядом с костром")
+			return
+		end
+		for item, amount in recipe.Gives do
+			PlayerData.AddItem(player, item, amount)
+		end
 	elseif not Builds.Place(player, recipe.Id) then
 		notify(player, "Здесь нельзя строить")
 		return
 	end
+
 	for item, amount in recipe.Cost do
-		addItem(player, item, -amount)
+		PlayerData.AddItem(player, item, -amount)
 	end
-	notify(player, "Создано: " .. recipe.Display)
+	notify(player, "Готово: " .. recipe.Display)
 end
 
 local function eat(player: Player)
@@ -319,20 +893,24 @@ local function eat(player: Player)
 	if not humanoid or humanoid.Health <= 0 then
 		return
 	end
-	if (player:GetAttribute("Berries") or 0) < 1 then
-		notify(player, "Нет ягод")
-		return
+	for _, food in Config.Food do
+		if PlayerData.GetItem(player, food.Item) > 0 then
+			PlayerData.AddItem(player, food.Item, -1)
+			local hunger = (player:GetAttribute("Hunger") :: number?) or 0
+			player:SetAttribute("Hunger", math.min(survival.MaxHunger, hunger + food.Hunger))
+			humanoid.Health = math.min(humanoid.MaxHealth, humanoid.Health + food.Heal)
+			notify(player, "Съедено: " .. Config.ItemNames[food.Item])
+			return
+		end
 	end
-	addItem(player, "Berries", -1)
-	player:SetAttribute("Hunger", math.min(survival.MaxHunger, player:GetAttribute("Hunger") + survival.BerryFood))
-	humanoid.Health = math.min(humanoid.MaxHealth, humanoid.Health + survival.BerryHeal)
+	notify(player, "Нечего есть")
 end
 
 local lastAction: { [Player]: number } = {}
 
-Remotes.Action.OnServerEvent:Connect(function(player: Player, action: unknown, arg: unknown)
+Remotes.Action.OnServerEvent:Connect(function(player: Player, action: unknown, arg: unknown, extra: unknown)
 	local now = os.clock()
-	if now - (lastAction[player] or 0) < 0.2 then
+	if now - (lastAction[player] or 0) < 0.15 then
 		return
 	end
 	lastAction[player] = now
@@ -341,20 +919,31 @@ Remotes.Action.OnServerEvent:Connect(function(player: Player, action: unknown, a
 		craft(player, arg)
 	elseif action == "Eat" then
 		eat(player)
+	elseif action == "Store" then
+		Containers.Transfer(player, arg, extra, true)
+	elseif action == "Take" then
+		Containers.Transfer(player, arg, extra, false)
+	elseif action == "CloseContainer" then
+		Containers.StopViewing(player, arg)
 	end
 end)
 
 local function spawnPlayer(player: Player)
-	if not player.Parent then
-		return
+	if player.Parent then
+		player:LoadCharacterAsync()
 	end
-	player:LoadCharacterAsync()
 end
 
 local function onCharacter(player: Player, character: Model)
-	clearInventory(player)
 	player:SetAttribute("Hunger", survival.MaxHunger)
+
+	if Shop.Has(player, "VIP") then
+		PlayerData.AddTool(player, "StoneHatchet")
+	end
 	giveTool(player, "Rock")
+	for _, id in PlayerData.OwnedTools(player) do
+		giveTool(player, id)
+	end
 
 	local spot = WorldGen.RandomSurface({ Enum.Material.Sand }, 200)
 		or WorldGen.RandomSurface({ Enum.Material.Grass }, 200)
@@ -365,13 +954,20 @@ local function onCharacter(player: Player, character: Model)
 
 	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
 	humanoid.Died:Connect(function()
-		notify(player, "Ты погиб. Всё, что было с собой, потеряно.")
+		local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local items = PlayerData.TakeAllItems(player)
+		PlayerData.ClearTools(player)
+		if root then
+			Containers.DropLootBag(root.Position, items, player.Name)
+		end
+		notify(player, "Ты погиб. Твой рюкзак остался на месте смерти.")
 		task.delay(survival.RespawnDelay, spawnPlayer, player)
 	end)
 end
 
 local function onPlayer(player: Player)
-	clearInventory(player)
+	PlayerData.Load(player)
+	Shop.Load(player)
 	player.CharacterAdded:Connect(function(character)
 		onCharacter(player, character)
 	end)
@@ -386,14 +982,32 @@ atmosphere.Parent = Lighting
 
 WorldGen.Generate()
 Resources.SpawnAll()
+Animals.SpawnAll()
+Animals.Run()
+Shop.Init()
 
 Players.PlayerAdded:Connect(onPlayer)
 Players.PlayerRemoving:Connect(function(player)
 	lastAction[player] = nil
+	PlayerData.Save(player)
+	PlayerData.Remove(player)
 end)
 for _, player in Players:GetPlayers() do
 	task.spawn(onPlayer, player)
 end
+
+game:BindToClose(function()
+	for _, player in Players:GetPlayers() do
+		PlayerData.Save(player)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(Config.Save.AutosaveInterval)
+		PlayerData.SaveAll(Players:GetPlayers())
+	end
+end)
 
 local hungerTimer = 0
 while true do
@@ -409,9 +1023,9 @@ while true do
 	for _, player in Players:GetPlayers() do
 		local character = player.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local root = rootOf(player)
 		if humanoid and root and humanoid.Health > 0 then
-			local hunger = player:GetAttribute("Hunger") or survival.MaxHunger
+			local hunger = (player:GetAttribute("Hunger") :: number?) or survival.MaxHunger
 			if drain then
 				hunger = math.max(0, hunger - survival.HungerDrainAmount)
 				player:SetAttribute("Hunger", hunger)
@@ -428,12 +1042,182 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="11">
+      <Item class="ModuleScript" referent="14">
+        <Properties>
+          <string name="Name">PlayerData</string>
+          <string name="Source"><![CDATA[local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+
+local PlayerData = {}
+
+type Entry = {
+	Items: { [string]: number },
+	Tools: { [string]: boolean },
+	CanSave: boolean,
+}
+
+local entries: { [Player]: Entry } = {}
+
+local store: DataStore? = nil
+do
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(Config.Save.DataStore)
+	end)
+	if ok then
+		store = result
+	else
+		warn("[PlayerData] Сохранение отключено: " .. tostring(result))
+	end
+end
+
+local function key(player: Player): string
+	return "player_" .. player.UserId
+end
+
+local function sync(player: Player, entry: Entry)
+	for _, item in Config.Items do
+		player:SetAttribute(item, entry.Items[item])
+	end
+end
+
+function PlayerData.Load(player: Player)
+	local saved = nil
+	local canSave = store ~= nil
+	if store then
+		local ok, result = pcall(function()
+			return store:GetAsync(key(player))
+		end)
+		if ok then
+			saved = result
+		else
+			-- Saving now would overwrite real progress with an empty inventory.
+			canSave = false
+			warn("[PlayerData] Не удалось загрузить " .. player.Name .. ": " .. tostring(result))
+		end
+	end
+
+	local entry: Entry = { Items = {}, Tools = {}, CanSave = canSave }
+	for _, item in Config.Items do
+		entry.Items[item] = saved and saved.Items and tonumber(saved.Items[item]) or 0
+	end
+	if saved and saved.Tools then
+		for id in Config.Tools do
+			if saved.Tools[id] then
+				entry.Tools[id] = true
+			end
+		end
+	end
+
+	entries[player] = entry
+	sync(player, entry)
+end
+
+function PlayerData.Save(player: Player)
+	local entry = entries[player]
+	if not entry or not entry.CanSave or not store then
+		return
+	end
+	local ok, err = pcall(function()
+		store:SetAsync(key(player), { Items = entry.Items, Tools = entry.Tools }, { player.UserId })
+	end)
+	if not ok then
+		warn("[PlayerData] Не удалось сохранить " .. player.Name .. ": " .. tostring(err))
+	end
+end
+
+function PlayerData.Remove(player: Player)
+	entries[player] = nil
+end
+
+function PlayerData.GetItem(player: Player, item: string): number
+	local entry = entries[player]
+	return entry and entry.Items[item] or 0
+end
+
+function PlayerData.AddItem(player: Player, item: string, amount: number)
+	local entry = entries[player]
+	if not entry or entry.Items[item] == nil then
+		return
+	end
+	entry.Items[item] = math.max(0, entry.Items[item] + amount)
+	player:SetAttribute(item, entry.Items[item])
+end
+
+function PlayerData.CanAfford(player: Player, cost: { [string]: number }): boolean
+	for item, amount in cost do
+		if PlayerData.GetItem(player, item) < amount then
+			return false
+		end
+	end
+	return true
+end
+
+-- Empties the inventory and returns what was in it.
+function PlayerData.TakeAllItems(player: Player): { [string]: number }
+	local entry = entries[player]
+	local taken = {}
+	if not entry then
+		return taken
+	end
+	for item, amount in entry.Items do
+		if amount > 0 then
+			taken[item] = amount
+		end
+		entry.Items[item] = 0
+	end
+	sync(player, entry)
+	return taken
+end
+
+function PlayerData.OwnedTools(player: Player): { string }
+	local entry = entries[player]
+	local list = {}
+	if entry then
+		for id in entry.Tools do
+			table.insert(list, id)
+		end
+	end
+	return list
+end
+
+function PlayerData.HasTool(player: Player, id: string): boolean
+	local entry = entries[player]
+	return entry ~= nil and entry.Tools[id] == true
+end
+
+function PlayerData.AddTool(player: Player, id: string)
+	local entry = entries[player]
+	if entry then
+		entry.Tools[id] = true
+	end
+end
+
+function PlayerData.ClearTools(player: Player)
+	local entry = entries[player]
+	if entry then
+		table.clear(entry.Tools)
+	end
+end
+
+function PlayerData.SaveAll(players: { Player })
+	for _, player in players do
+		task.spawn(PlayerData.Save, player)
+	end
+end
+
+return PlayerData
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="15">
         <Properties>
           <string name="Name">Resources</string>
           <string name="Source"><![CDATA[local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Targeting = require(script.Parent.Targeting)
 local WorldGen = require(script.Parent.WorldGen)
 
 local Resources = {}
@@ -554,13 +1338,9 @@ end
 -- Nearest node in front of the character within `range` studs.
 function Resources.FindTarget(root: BasePart, range: number): Model?
 	local best, bestDistance = nil, math.huge
-	local look = root.CFrame.LookVector
 	for _, model in folder:GetChildren() do
-		local offset = model:GetPivot().Position - root.Position
-		local flat = Vector3.new(offset.X, 0, offset.Z)
-		local distance = flat.Magnitude
-		local inFront = distance < 3 or look:Dot(flat.Unit) > 0.2
-		if distance <= range and math.abs(offset.Y) < 15 and inFront and distance < bestDistance then
+		local distance = Targeting.InFront(root, model:GetPivot().Position, range)
+		if distance and distance < bestDistance then
 			best, bestDistance = model, distance
 		end
 	end
@@ -616,7 +1396,76 @@ return Resources
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="16">
+        <Properties>
+          <string name="Name">Shop</string>
+          <string name="Source"><![CDATA[local MarketplaceService = game:GetService("MarketplaceService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+
+local Remotes = ReplicatedStorage.Remotes
+
+local Shop = {}
+
+-- Ownership is mirrored to a player attribute named after the pass key, e.g. "VIP".
+function Shop.Has(player: Player, passKey: string): boolean
+	return player:GetAttribute(passKey) == true
+end
+
+function Shop.Load(player: Player)
+	for _, pass in Config.GamePasses do
+		if pass.Id ~= 0 then
+			local ok, owns = pcall(function()
+				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, pass.Id)
+			end)
+			player:SetAttribute(pass.Key, ok and owns == true)
+		end
+	end
+end
+
+function Shop.Init()
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, passId, purchased)
+		if not purchased then
+			return
+		end
+		for _, pass in Config.GamePasses do
+			if pass.Id == passId then
+				player:SetAttribute(pass.Key, true)
+				Remotes.Notify:FireClient(player, "Спасибо за покупку: " .. pass.Display .. "!")
+			end
+		end
+	end)
+end
+
+return Shop
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="17">
+        <Properties>
+          <string name="Name">Targeting</string>
+          <string name="Source"><![CDATA[local Targeting = {}
+
+-- Horizontal distance to `position` if it is within `range` and roughly in front of `root`.
+function Targeting.InFront(root: BasePart, position: Vector3, range: number): number?
+	local offset = position - root.Position
+	local flat = Vector3.new(offset.X, 0, offset.Z)
+	local distance = flat.Magnitude
+	if distance > range or math.abs(offset.Y) > 15 then
+		return nil
+	end
+	if distance > 3 and root.CFrame.LookVector:Dot(flat.Unit) < 0.2 then
+		return nil
+	end
+	return distance
+end
+
+return Targeting
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="18">
         <Properties>
           <string name="Name">Tools</string>
           <string name="Source"><![CDATA[local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -658,20 +1507,21 @@ function looks.Rock(tool: Tool)
 	tool.Grip = CFrame.new(0, 0, 0)
 end
 
-local function stickWithHead(tool: Tool, headSize: Vector3)
-	local handle = newPart(Vector3.new(0.35, 0.35, 3.2), woodColor, Enum.Material.Wood)
+-- In grip space +Y is up and -Z is forward, so the shaft runs along Y with the head on top.
+local function stickWithHead(tool: Tool, headSize: Vector3, headOffset: CFrame)
+	local handle = newPart(Vector3.new(0.35, 3.4, 0.35), woodColor, Enum.Material.Wood)
 	handle.Name = "Handle"
 	handle.Parent = tool
-	attach(handle, newPart(headSize, stoneColor, Enum.Material.Slate), CFrame.new(0, 0.3, 1.4))
-	tool.Grip = CFrame.new(0, 0, -1.2)
+	attach(handle, newPart(headSize, stoneColor, Enum.Material.Slate), headOffset)
+	tool.Grip = CFrame.new(0, -1.1, 0) * CFrame.Angles(math.rad(20), 0, 0)
 end
 
 function looks.StoneHatchet(tool: Tool)
-	stickWithHead(tool, Vector3.new(0.4, 1.3, 0.8))
+	stickWithHead(tool, Vector3.new(0.3, 1, 1.3), CFrame.new(0, 1.25, -0.6))
 end
 
 function looks.StonePickaxe(tool: Tool)
-	stickWithHead(tool, Vector3.new(0.4, 2.4, 0.5))
+	stickWithHead(tool, Vector3.new(0.35, 0.45, 2.8), CFrame.new(0, 1.5, 0))
 end
 
 function Tools.Create(id: string, onSwing: (Player, Tool, string) -> ()): Tool
@@ -707,24 +1557,11 @@ function Tools.Create(id: string, onSwing: (Player, Tool, string) -> ()): Tool
 	return tool
 end
 
-function Tools.Has(player: Player, id: string): boolean
-	for _, container in { player:FindFirstChild("Backpack"), player.Character } do
-		if container then
-			for _, item in container:GetChildren() do
-				if item:IsA("Tool") and item:GetAttribute("ToolId") == id then
-					return true
-				end
-			end
-		end
-	end
-	return false
-end
-
 return Tools
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="19">
         <Properties>
           <string name="Name">WorldGen</string>
           <string name="Source"><![CDATA[local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -819,15 +1656,15 @@ return WorldGen
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="14">
+  <Item class="StarterPlayer" referent="20">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="15">
+    <Item class="StarterCharacterScripts" referent="21">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="Script" referent="16">
+      <Item class="Script" referent="22">
         <Properties>
           <string name="Name">Health</string>
           <token name="RunContext">0</token>
@@ -837,18 +1674,19 @@ return WorldGen
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="17">
+    <Item class="StarterPlayerScripts" referent="23">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="18">
+      <Item class="Folder" referent="24">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="LocalScript" referent="19">
+        <Item class="LocalScript" referent="25">
           <Properties>
             <string name="Name">HUD</string>
-            <string name="Source"><![CDATA[local Players = game:GetService("Players")
+            <string name="Source"><![CDATA[local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -1019,25 +1857,6 @@ player:GetAttributeChangedSignal("Hunger"):Connect(refreshHunger)
 refreshInventory()
 refreshHunger()
 
--- Controls hint
-
-local hint = label(gui, "ЛКМ — бить   |   C — крафт   |   F — съесть ягоду", 18)
-hint.AnchorPoint = Vector2.new(0.5, 1)
-hint.Position = UDim2.new(0.5, 0, 1, -78)
-hint.Size = UDim2.fromOffset(500, 24)
-hint.TextTransparency = 0.2
-
-UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then
-		return
-	end
-	if input.KeyCode == Enum.KeyCode.C then
-		craftPanel.Visible = not craftPanel.Visible
-	elseif input.KeyCode == Enum.KeyCode.F then
-		Remotes.Action:FireServer("Eat")
-	end
-end)
-
 -- Notifications
 
 local feed = Instance.new("Frame")
@@ -1053,7 +1872,7 @@ layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 layout.Padding = UDim.new(0, 4)
 layout.Parent = feed
 
-Remotes.Notify.OnClientEvent:Connect(function(text: string)
+local function showNotice(text: string)
 	local l = label(feed, text, 22)
 	l.Size = UDim2.new(1, 0, 0, 26)
 	task.delay(1.5, function()
@@ -1063,6 +1882,233 @@ Remotes.Notify.OnClientEvent:Connect(function(text: string)
 		end)
 		tween:Play()
 	end)
+end
+
+Remotes.Notify.OnClientEvent:Connect(showNotice)
+
+local function button(parent: Instance, text: string, color: Color3): TextButton
+	local b = Instance.new("TextButton")
+	b.Font = font
+	b.TextSize = 18
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Text = text
+	b.BackgroundColor3 = color
+	b.Parent = parent
+	corner(b, 6)
+	return b
+end
+
+-- Chests and loot bags
+
+local rowHeight = 40
+local containerPanel = Instance.new("Frame")
+containerPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+containerPanel.Position = UDim2.fromScale(0.5, 0.45)
+containerPanel.Size = UDim2.fromOffset(460, 110 + #Config.Items * rowHeight)
+containerPanel.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+containerPanel.BackgroundTransparency = 0.15
+containerPanel.Visible = false
+containerPanel.Parent = gui
+corner(containerPanel)
+
+local containerTitle = label(containerPanel, "", 24)
+containerTitle.Size = UDim2.new(1, 0, 0, 40)
+
+local header = label(containerPanel, "у тебя / внутри", 16)
+header.Position = UDim2.fromOffset(150, 34)
+header.Size = UDim2.fromOffset(110, 20)
+header.TextTransparency = 0.3
+
+local openId: string? = nil
+local openItems: { [string]: number } = {}
+local openModel: Model? = nil
+local countLabels: { [string]: TextLabel } = {}
+
+for i, item in Config.Items do
+	local y = 56 + (i - 1) * rowHeight
+	local name = label(containerPanel, Config.ItemNames[item], 20)
+	name.TextXAlignment = Enum.TextXAlignment.Left
+	name.Position = UDim2.fromOffset(16, y)
+	name.Size = UDim2.fromOffset(140, rowHeight - 6)
+
+	local count = label(containerPanel, "", 20)
+	count.Position = UDim2.fromOffset(150, y)
+	count.Size = UDim2.fromOffset(110, rowHeight - 6)
+	countLabels[item] = count
+
+	local store = button(containerPanel, "Положить", Color3.fromRGB(70, 90, 140))
+	store.Position = UDim2.fromOffset(266, y)
+	store.Size = UDim2.fromOffset(90, rowHeight - 8)
+	store.Activated:Connect(function()
+		Remotes.Action:FireServer("Store", openId, item)
+	end)
+
+	local take = button(containerPanel, "Взять", Color3.fromRGB(60, 120, 60))
+	take.Position = UDim2.fromOffset(362, y)
+	take.Size = UDim2.fromOffset(82, rowHeight - 8)
+	take.Activated:Connect(function()
+		Remotes.Action:FireServer("Take", openId, item)
+	end)
+end
+
+local closeButton = button(containerPanel, "Закрыть", Color3.fromRGB(110, 50, 50))
+closeButton.AnchorPoint = Vector2.new(0.5, 1)
+closeButton.Position = UDim2.new(0.5, 0, 1, -10)
+closeButton.Size = UDim2.fromOffset(140, 34)
+
+local function refreshContainer()
+	if not openId then
+		return
+	end
+	for item, count in countLabels do
+		count.Text = string.format("%d / %d", player:GetAttribute(item) or 0, openItems[item] or 0)
+	end
+end
+
+local function closeContainer(tellServer: boolean)
+	if openId and tellServer then
+		Remotes.Action:FireServer("CloseContainer", openId)
+	end
+	openId, openModel = nil, nil
+	containerPanel.Visible = false
+end
+
+closeButton.Activated:Connect(function()
+	closeContainer(true)
+end)
+
+for _, item in Config.Items do
+	player:GetAttributeChangedSignal(item):Connect(refreshContainer)
+end
+
+Remotes.Container.OnClientEvent:Connect(function(action: string, id: string, items: any, title: string?, model: Model?)
+	if action == "Open" then
+		openId, openItems, openModel = id, items, model
+		containerTitle.Text = title or ""
+		containerPanel.Visible = true
+		refreshContainer()
+	elseif action == "Update" and id == openId then
+		openItems = items
+		refreshContainer()
+	elseif action == "Close" and id == openId then
+		closeContainer(false)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.3)
+		if openId then
+			local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+			local model = openModel
+			if not root or not model or not model.Parent or (model:GetPivot().Position - root.Position).Magnitude > 14 then
+				closeContainer(true)
+			end
+		end
+	end
+end)
+
+-- Shop
+
+local shopPanel = Instance.new("Frame")
+shopPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+shopPanel.Position = UDim2.fromScale(0.5, 0.45)
+shopPanel.Size = UDim2.fromOffset(420, 100 + #Config.GamePasses * 90)
+shopPanel.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+shopPanel.BackgroundTransparency = 0.15
+shopPanel.Visible = false
+shopPanel.Parent = gui
+corner(shopPanel)
+
+local shopTitle = label(shopPanel, "Магазин", 26)
+shopTitle.Size = UDim2.new(1, 0, 0, 44)
+
+local buyButtons: { [string]: TextButton } = {}
+
+for i, pass in Config.GamePasses do
+	local y = 48 + (i - 1) * 90
+	local title = label(shopPanel, pass.Display, 22)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Position = UDim2.fromOffset(16, y)
+	title.Size = UDim2.fromOffset(250, 26)
+
+	local description = label(shopPanel, pass.Description, 16)
+	description.TextXAlignment = Enum.TextXAlignment.Left
+	description.TextYAlignment = Enum.TextYAlignment.Top
+	description.TextWrapped = true
+	description.Position = UDim2.fromOffset(16, y + 28)
+	description.Size = UDim2.fromOffset(260, 50)
+
+	local buy = button(shopPanel, "Купить", Color3.fromRGB(200, 150, 40))
+	buy.Position = UDim2.fromOffset(290, y + 14)
+	buy.Size = UDim2.fromOffset(114, 40)
+	buy.Activated:Connect(function()
+		if player:GetAttribute(pass.Key) then
+			return
+		end
+		if pass.Id == 0 then
+			showNotice("Этот Game Pass ещё не настроен (Config.GamePasses)")
+			return
+		end
+		MarketplaceService:PromptGamePassPurchase(player, pass.Id)
+	end)
+	buyButtons[pass.Key] = buy
+end
+
+local shopClose = button(shopPanel, "Закрыть", Color3.fromRGB(110, 50, 50))
+shopClose.AnchorPoint = Vector2.new(0.5, 1)
+shopClose.Position = UDim2.new(0.5, 0, 1, -10)
+shopClose.Size = UDim2.fromOffset(140, 34)
+shopClose.Activated:Connect(function()
+	shopPanel.Visible = false
+end)
+
+local shopButton = button(gui, "Магазин", Color3.fromRGB(200, 150, 40))
+shopButton.AnchorPoint = Vector2.new(1, 0)
+shopButton.Position = UDim2.new(1, -16, 0, 60)
+shopButton.Size = UDim2.fromOffset(120, 38)
+shopButton.TextSize = 20
+shopButton.Activated:Connect(function()
+	shopPanel.Visible = not shopPanel.Visible
+end)
+
+local vipBadge = label(gui, "VIP", 22)
+vipBadge.Position = UDim2.fromOffset(16, 70 + inventory.Size.Y.Offset)
+vipBadge.Size = UDim2.fromOffset(60, 26)
+vipBadge.TextColor3 = Color3.fromRGB(255, 200, 60)
+vipBadge.Visible = false
+
+local function refreshPasses()
+	for _, pass in Config.GamePasses do
+		local owned = player:GetAttribute(pass.Key) == true
+		buyButtons[pass.Key].Text = owned and "Куплено" or "Купить"
+		buyButtons[pass.Key].AutoButtonColor = not owned
+	end
+	vipBadge.Visible = player:GetAttribute("VIP") == true
+end
+
+for _, pass in Config.GamePasses do
+	player:GetAttributeChangedSignal(pass.Key):Connect(refreshPasses)
+end
+refreshPasses()
+
+-- Controls
+
+local hint = label(gui, "ЛКМ — бить   |   C — крафт   |   F — поесть   |   E — открыть", 18)
+hint.AnchorPoint = Vector2.new(0.5, 1)
+hint.Position = UDim2.new(0.5, 0, 1, -78)
+hint.Size = UDim2.fromOffset(600, 24)
+hint.TextTransparency = 0.2
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.C then
+		craftPanel.Visible = not craftPanel.Visible
+	elseif input.KeyCode == Enum.KeyCode.F then
+		Remotes.Action:FireServer("Eat")
+	end
 end)
 ]]></string>
           </Properties>

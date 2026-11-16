@@ -13,6 +13,9 @@
         },
         "Notify": {
           "$className": "RemoteEvent"
+        },
+        "Container": {
+          "$className": "RemoteEvent"
         }
       }
     },
