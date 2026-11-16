@@ -142,6 +142,94 @@ describe('parseLabel', () => {
   })
 })
 
+describe('appellation wording', () => {
+  /** Exactly what the recognition service read off a bottle of Pinot Grigio. */
+  const CORTE = ['CORTE VECCHIA', 'PINOT GRIGIO', 'DELLE VENEZIE', 'Denominazione di Origine Protetta', '2025', 'TINAZZI']
+
+  it('never puts the designation of origin in the name', () => {
+    for (const line of ['Denominazione di Origine Protetta', 'Appellation Bordeaux Contrôlée', 'DOCG']) {
+      expect(pickName([{ text: line, height: 90 }])).toBeUndefined()
+    }
+  })
+
+  it('takes the title even when a line below it measures marginally taller', () => {
+    // Heights and positions exactly as the service reported them for this bottle: the title
+    // is set much larger than the region, yet measures 56 against 59.
+    const lines: OcrLine[] = [
+      { text: 'CORTE VECCHIA', height: 56, top: 420 },
+      { text: 'PINOT GRIGIO', height: 48, top: 981 },
+      { text: 'DELLE VENEZIE', height: 59, top: 999 },
+      { text: 'Denominazione di Origine Protetta', height: 52, top: 1017 },
+      { text: '2025', height: 11, top: 1078 },
+      { text: 'TINAZZI', height: 34, top: 1176 },
+    ]
+    expect(pickName(lines)).toBe('CORTE VECCHIA')
+  })
+
+  it('still joins a title that wrapped onto the next line', () => {
+    expect(
+      pickName([
+        { text: 'Мускат белый', height: 95, top: 600 },
+        { text: 'красного камня', height: 68, top: 700 },
+        { text: 'Вино ликёрное белое', height: 42, top: 900 },
+      ]),
+    ).toBe('Мускат белый красного камня')
+  })
+
+  it('still prefers a genuinely larger line further down', () => {
+    expect(
+      pickName([
+        { text: 'Винодельческое хозяйство', height: 30, top: 10 },
+        { text: 'Мускат белый', height: 95, top: 200 },
+      ]),
+    ).toBe('Мускат белый')
+  })
+
+  it('reads the vintage off the same label', () => {
+    expect(findYear(CORTE.map((text) => ({ text, height: 40 })))).toBe(2025)
+  })
+})
+
+describe('confidence gating', () => {
+  /** What the recognizer actually returned for an ornate label on a dark, curved bottle. */
+  const GUESSWORK: OcrLine[] = [
+    { text: 'ОСВОДСТВЕННО-АГРАРН Е ОБЪЕДИНЕНИЕ', height: 28, confidence: 40 },
+    { text: 'М ССАНДР: | » fonds yo Tue', height: 61, confidence: 11 },
+    { text: 'ШОКАТ БЕЛЫЙ медь', height: 44, confidence: 0 },
+    { text: 'НОГо КАМ!', height: 46, confidence: 46 },
+  ]
+
+  it('fills nothing when every line is guesswork', () => {
+    expect(parseLabel('', GUESSWORK)).toEqual({
+      name: undefined,
+      brand: undefined,
+      year: undefined,
+      volumeMl: undefined,
+      abv: undefined,
+      expirationDate: undefined,
+    })
+  })
+
+  it('still reads a label the recognizer was sure about', () => {
+    const confident = WINE_LINES.map((line) => ({ ...line, confidence: 93 }))
+    expect(parseLabel(WINE_LABEL, confident).name).toBe('Мускат белый красного камня')
+  })
+
+  it('ignores a misread year and volume mixed in among good lines', () => {
+    const parsed = parseLabel('', [
+      { text: 'Мускат белый', height: 95, confidence: 92 },
+      { text: '2019', height: 65, confidence: 91 },
+      { text: '1899 0,75 л', height: 30, confidence: 12 },
+    ])
+    expect(parsed.year).toBe(2019)
+    expect(parsed.volumeMl).toBeUndefined()
+  })
+
+  it('trusts plain text, which carries no confidence at all', () => {
+    expect(parseLabel(WINE_LABEL).name).toBeDefined()
+  })
+})
+
 describe('toProductDraft', () => {
   it('keeps vintages apart by putting the year in the name', () => {
     const draft = toProductDraft({ name: 'Мускат белый', year: 2019 }, 'wine')
