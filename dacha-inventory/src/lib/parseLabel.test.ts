@@ -132,6 +132,7 @@ describe('parseLabel', () => {
       volumeMl: 750,
       abv: 16,
       expirationDate: undefined,
+      category: 'wine',
     })
   })
 
@@ -139,6 +140,64 @@ describe('parseLabel', () => {
     const parsed = parseLabel(CANNED_LABEL)
     expect(parsed.name).toBe('ГЛАВПРОДУКТ')
     expect(parsed.expirationDate).toBe('2027-08-14')
+    expect(parsed.category).toBeUndefined()
+  })
+})
+
+describe('reading the rest of the label', () => {
+  /** Both bottles exactly as the recognition service returned them, heights and all. */
+  const CORTE: OcrLine[] = [
+    { text: 'CORTE VECCHIA', height: 56, top: 420 },
+    { text: 'PINOT GRIGIO', height: 48, top: 981 },
+    { text: 'DELLE VENEZIE', height: 59, top: 999 },
+    { text: 'Denominazione di Origine Protetta', height: 52, top: 1017 },
+    { text: '2025', height: 11, top: 1078 },
+    { text: 'TINAZZI', height: 34, top: 1176 },
+  ]
+  const MASSANDRA: OcrLine[] = [
+    { text: 'ПРОИЗВОДСТВЕННО-АГРАРНОЕ ОБЪЕДИНЕНИЕ', height: 58, top: 311 },
+    { text: 'МАССАНДРА', height: 157, top: 342 },
+    { text: 'ВИНО РОССИИ', height: 51, top: 812 },
+    { text: 'МУСКАТ БЕЛЫЙ', height: 93, top: 808 },
+    { text: 'КРАСНОГО КАМНЯ', height: 124, top: 820 },
+  ]
+
+  it('takes the producer printed small along the bottom', () => {
+    const parsed = parseLabel('', CORTE)
+    expect(parsed.name).toBe('CORTE VECCHIA')
+    expect(parsed.brand).toBe('TINAZZI')
+    expect(parsed.year).toBe(2025)
+    expect(parsed.category).toBe('wine')
+  })
+
+  it('takes the producer named beside its caption, and the wine below it', () => {
+    const parsed = parseLabel('', MASSANDRA)
+    expect(parsed.brand).toBe('МАССАНДРА')
+    expect(parsed.name).toBe('МУСКАТ БЕЛЫЙ КРАСНОГО КАМНЯ')
+    expect(parsed.category).toBe('wine')
+  })
+
+  it('reads the caption whose hard sign came back as a soft one', () => {
+    // How the service actually returns it: Ъ and Ь are all but the same shape in capitals.
+    const misread = MASSANDRA.map((line) => ({ ...line, text: line.text.replace('ОБЪЕД', 'ОБЬЕД') }))
+    expect(parseLabel('', misread).brand).toBe('МАССАНДРА')
+    expect(parseLabel('', misread).name).toBe('МУСКАТ БЕЛЫЙ КРАСНОГО КАМНЯ')
+  })
+
+  it('refuses a two-word line at the foot, which is as likely to be the wine', () => {
+    const unnamed = MASSANDRA.filter((line) => !line.text.includes('ОБЪЕДИНЕНИЕ'))
+    const parsed = parseLabel('', unnamed)
+    expect(parsed.name).toBe('МАССАНДРА')
+    expect(parsed.brand).toBeUndefined()
+  })
+
+  it('leaves the brand alone when nothing on the label names a producer', () => {
+    expect(
+      parseLabel('', [
+        { text: 'Тушенка говяжья', height: 90, top: 100 },
+        { text: 'высший сорт', height: 40, top: 200 },
+      ]).brand,
+    ).toBeUndefined()
   })
 })
 
