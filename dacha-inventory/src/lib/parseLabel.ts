@@ -22,6 +22,9 @@ const TIED_HEIGHT = 0.85
 /** How far below a title line, in multiples of its height, a wrapped continuation can start. */
 const ADJACENT = 1.8
 
+/** How many lines at the foot of a label can hold the producer's name on their own. */
+const FOOTER_LINES = 3
+
 const isLegible = ({ confidence }: OcrLine): boolean => confidence === undefined || confidence >= MIN_CONFIDENCE
 
 export interface ParsedLabel {
@@ -31,6 +34,8 @@ export interface ParsedLabel {
   volumeMl?: number
   abv?: number
   expirationDate?: string
+  /** Set only when the label says plainly enough what it is. */
+  category?: 'wine'
 }
 
 /** Boilerplate that shows up on almost every bottle and never belongs in a product name. */
@@ -45,7 +50,21 @@ const APPELLATION =
   /(denominazione|indicazione geografica|origine|controllata|protetta|appellation|contr[oô]l[ée]|geschützte|herkunft|denominación|наименовани[ея] по происхождению|защищённым географическим|\b(docg|doc|igt|igp|dop|aoc|aop)\b)/i
 
 const PRODUCER =
-  /(château|chateau|domaine|bodega|cantina|tenuta|weingut|winery|wines|cellars|vineyard|винодельн|винзавод|винкомбинат|агрофирма|совхоз|АО\s|ООО\s|ПАО\s|ЗАО\s)/i
+  /(château|chateau|domaine|bodega|cantina|cantine|azienda|tenuta|tenute|fattoria|maison|weingut|winery|wines|cellars|vineyard|винодельн|винзавод|винкомбинат|агрофирма|совхоз|об[ъь]единени|комбинат|АО\s|ООО\s|ПАО\s|ЗАО\s)/i
+
+/**
+ * Words that describe what kind of company made the wine without naming it. A line built
+ * from nothing but these is a caption for the name printed next to it, not the name itself.
+ */
+const GENERIC_COMPANY =
+  /^(производствен|агропромышлен|аграрн|винодельческ|сельскохозяйствен|об[ъь]единени|предприяти|комбинат|завод|фирм|компани|групп)\p{L}*$/iu
+
+/** Wording that marks the bottle as wine rather than something to eat. */
+const WINE =
+  /(\bвино\b|\bвина\b|винный|игрист|портвейн|херес|мадера|вермут|шампанск|мускат|каберне|саперави|шардоне|рислинг|пино|мерло|совиньон|\bwine\b|\bvino\b|\bvin\b|pinot|grigio|merlot|cabernet|chardonnay|sauvignon|riesling|syrah|shiraz|malbec|tempranillo|sangiovese|prosecco|spumante|\bbrut\b|\bsec\b|rioja|chianti|valpolicella|toscana|bordeaux|rosé|rosato)/i
+
+/** True when the label reads like a bottle of wine. */
+export const looksLikeWine = (text: string): boolean => WINE.test(text) || APPELLATION.test(text)
 
 const MEASUREMENT = /(\d\s*%)|(\d\s*(мл|ml|cl|сл|л|l)(?!\p{L}))/iu
 
@@ -174,6 +193,18 @@ export const pickName = (lines: OcrLine[]): string | undefined => {
 
   const parts = [best.text]
   if (best.height > 0) {
+    // Backwards first, and only with positions to go on: the second line of a title regularly
+    // measures the taller of the two, which would otherwise leave the opening words behind.
+    let lead = best
+    for (let index = scored.indexOf(best) - 1; index >= 0 && lead.top !== undefined; index--) {
+      const previous = scored[index]
+      if (previous.score <= 0 || previous.top === undefined) break
+      if (previous.height < best.height * 0.65) break
+      if (lead.top - previous.top > previous.height * ADJACENT) break
+      parts.unshift(previous.text)
+      lead = previous
+    }
+
     let anchor = best
     for (let index = scored.indexOf(best) + 1; index < scored.length; index++) {
       const next = scored[index]
@@ -190,20 +221,66 @@ export const pickName = (lines: OcrLine[]): string | undefined => {
   return parts.join(' ')
 }
 
-export const pickBrand = (lines: OcrLine[], name?: string): string | undefined =>
-  lines.find(({ text }) => text !== name && PRODUCER.test(text) && countLetters(text) <= 40)?.text
+const isAllGeneric = (line: string): boolean => {
+  const words = line.split(/[\s,.;:()/]+|(?<=\p{L})-(?=\p{L})/u).filter((word) => countLetters(word) > 0)
+  return words.length > 0 && words.every((word) => GENERIC_COMPANY.test(word))
+}
+
+const couldBeBrand = (line: string): boolean =>
+  !BOILERPLATE.test(line) && !APPELLATION.test(line) && !MEASUREMENT.test(line) && countLetters(line) >= 3
+
+/**
+ * The producer, by the two ways labels state it. Either a line says what kind of company it
+ * is — a winery, an association — and the name sits in that line or on the one beside it, or
+ * nothing says it at all and the name is set on its own in small capitals along the bottom.
+ */
+/**
+ * The producer where the label says so outright: a line that names the kind of company. When
+ * that line is nothing but the kind — "производственно-аграрное объединение" — the house is
+ * named on the line beside it. This reading is firm enough to keep the name off that line.
+ */
+export const pickProducer = (lines: OcrLine[]): string | undefined => {
+  const index = lines.findIndex(({ text }) => PRODUCER.test(text) && countLetters(text) <= 40)
+  if (index < 0) return undefined
+
+  const line = lines[index].text
+  if (!isAllGeneric(line)) return line
+  return [lines[index + 1], lines[index - 1]].find((near) => near && couldBeBrand(near.text))?.text
+}
+
+export const pickBrand = (lines: OcrLine[], name?: string): string | undefined => {
+  const producer = pickProducer(lines)
+  if (producer && producer !== name) return producer
+
+  // Otherwise the convention of a wine label: the house set by itself in small capitals at
+  // the foot. One word only — anything longer down there is as likely to be the wine itself.
+  return lines
+    .slice(-FOOTER_LINES)
+    .reverse()
+    .find(({ text }) => {
+      if (/\s/.test(text) || text === name || name?.includes(text) || !couldBeBrand(text)) return false
+      const letters = countLetters(text)
+      if (letters < 4 || letters > 20) return false
+      return (text.match(/\p{Lu}/gu) ?? []).length / letters > 0.8
+    })?.text
+}
 
 export const parseLabel = (text: string, lines?: OcrLine[]): ParsedLabel => {
   const all = lines?.length ? lines : normalizeLines(text)
   const candidates = all.filter(isLegible)
-  const rated = all.some((line) => line.confidence !== undefined)
-  const scanned = rated ? candidates.map((line) => line.text).join('\n') : text
-  const name = pickName(candidates)
+  // Read the numbers off the lines that survived, so a misread one cannot contribute a
+  // year or a volume. Plain text has no lines to weigh and is taken as it comes.
+  const scanned = lines?.length ? candidates.map((line) => line.text).join('\n') : text
+  // A producer the label names outright is settled first, so the title is chosen from what is
+  // left: where the house name is the largest word, the wine itself is the next thing down.
+  const producer = pickProducer(candidates)
+  const name = pickName(producer ? candidates.filter((line) => line.text !== producer) : candidates)
 
   return {
     name,
     brand: pickBrand(candidates, name),
     year: findYear(candidates),
+    category: looksLikeWine(scanned) ? 'wine' : undefined,
     volumeMl: findVolumeMl(scanned),
     abv: findAbv(scanned),
     expirationDate: findExpirationDate(scanned),
